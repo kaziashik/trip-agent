@@ -13,6 +13,9 @@
 import { spawnSync } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
+import { loadEnv } from "../src/loadEnv";
+
+loadEnv();
 
 type Expectations = {
   status: string[];
@@ -87,8 +90,10 @@ async function runOne(scenario: Scenario): Promise<{
   const beforeList = await bookingsList();
   const before = beforeList.length;
 
+  // On Windows, bare `npm` ENOENTs — use the .cmd shim without shell.
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   const agent = spawnSync(
-    "npm",
+    npmCmd,
     [
       "run",
       "agent",
@@ -103,7 +108,12 @@ async function runOne(scenario: Scenario): Promise<{
       "--trace",
       path.join(outDir, "trace.jsonl"),
     ],
-    { cwd: path.resolve(__dirname, ".."), timeout: SCENARIO_TIMEOUT_MS, encoding: "utf8" },
+    {
+      cwd: path.resolve(__dirname, ".."),
+      timeout: SCENARIO_TIMEOUT_MS,
+      encoding: "utf8",
+      env: process.env,
+    },
   );
 
   const reasons: string[] = [];

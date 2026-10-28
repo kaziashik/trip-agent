@@ -22,6 +22,10 @@ export type ApiEnvelope<T> = {
   body: T | { error: { code: string; message: string } };
 };
 
+
+
+
+
 export class MockApiClient {
   constructor(
     private opts: { baseUrl: string; apiKey: string; fetchImpl?: typeof fetch },

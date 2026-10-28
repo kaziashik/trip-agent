@@ -8,6 +8,8 @@ export type AgentResult = {
   errors: Array<{ code: string; message: string; step?: number }>;
 };
 
+
+
 /** One JSONL line of the trace. */
 export type TraceLine = {
   run_id: string;
@@ -19,6 +21,8 @@ export type TraceLine = {
   retry_count?: number;
   outcome?: string;
 };
+
+
 
 /** Minimal validation — enough to catch a malformed result before submission. */
 export function validateResult(r: unknown): string[] {
