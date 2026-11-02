@@ -287,13 +287,18 @@ function stableStringify(value: unknown): string {
   );
 }
 
-function backoffMs(attempt: number): number {
+/**
+ * Exponential backoff for 503 (and transport timeouts).
+ * 503 means the server committed nothing — safe to retry the same request.
+ */
+export function backoffMs(attempt: number): number {
   return Math.min(CONFIG.backoffBaseMs * 2 ** attempt, CONFIG.backoffCapMs);
 }
 
 export function isRetryableStatus(status: number): boolean {
   // Only transport / overload faults. Auth and validation are fatal:
   // 400 bad_request, 401 unauthorized, 403 revoked, 422 invalid_request.
+  // 503 = temporary overload, nothing committed → retry with backoff.
   return status === 429 || status === 503;
 }
 
@@ -308,7 +313,7 @@ export function fatalHttpCode(status: number): string {
 /**
  * How long to sleep before retrying.
  * 429: wait EXACTLY Retry-After seconds (rate limit: 60/min, 5000/day).
- * 503 / other: prefer Retry-After if present, else exponential backoff.
+ * 503: nothing committed — Retry-After if present, else exponential backoff.
  */
 export function retryWaitMs(
   status: number,
@@ -326,6 +331,7 @@ export function retryWaitMs(
     return CONFIG.backoffCapMs;
   }
 
+  // 503 (and any other retryable): honor Retry-After when given, else backoff.
   if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
     return retryAfterSec * 1000;
   }

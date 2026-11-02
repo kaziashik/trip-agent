@@ -7,6 +7,7 @@ import {
   isRetryableStatus,
   fatalHttpCode,
   retryWaitMs,
+  backoffMs,
   toolResultContent,
   parseToolArguments,
   usageCost,
@@ -131,8 +132,19 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     const headers = new Headers({ "retry-after": "3" });
     expect(retryWaitMs(429, headers, 0)).toBe(3000);
     expect(retryWaitMs(429, new Headers({ "retry-after": "0" }), 2)).toBe(0);
-    // 503 without Retry-After uses backoff, not a fixed 429 rule
-    expect(retryWaitMs(503, new Headers(), 0)).toBeGreaterThan(0);
+  });
+
+  it("retries 503 with exponential backoff (nothing committed)", () => {
+    expect(isRetryableStatus(503)).toBe(true);
+    // No Retry-After → exponential backoff from CONFIG
+    expect(retryWaitMs(503, new Headers(), 0)).toBe(backoffMs(0));
+    expect(retryWaitMs(503, new Headers(), 1)).toBe(backoffMs(1));
+    expect(retryWaitMs(503, new Headers(), 2)).toBe(backoffMs(2));
+    expect(backoffMs(0)).toBe(CONFIG.backoffBaseMs);
+    expect(backoffMs(1)).toBe(CONFIG.backoffBaseMs * 2);
+    expect(backoffMs(20)).toBe(CONFIG.backoffCapMs);
+    // Optional Retry-After on 503 still honored
+    expect(retryWaitMs(503, new Headers({ "retry-after": "2" }), 0)).toBe(2000);
   });
 
   it("rejects a structurally invalid result", () => {

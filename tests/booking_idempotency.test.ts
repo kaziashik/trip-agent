@@ -108,9 +108,10 @@ describe("book_flight idempotency_key", () => {
     expect(client.bookFlight).toHaveBeenCalledTimes(1);
   });
 
-  it("reuses the same key on retry after HTTP 503 then success", async () => {
+  it("retries 503 with backoff and same key (nothing committed — no reconcile)", async () => {
     const expectedKey = bookingKey("goal", "FL-2", "Ada");
     const keys: string[] = [];
+    const sleeps: number[] = [];
     let calls = 0;
 
     const client = {
@@ -135,7 +136,9 @@ describe("book_flight idempotency_key", () => {
 
     const outcome = await bookWithReconcile(
       client,
-      async () => {},
+      async (ms) => {
+        sleeps.push(ms);
+      },
       () => Date.now(),
       () => {},
       1,
@@ -146,6 +149,10 @@ describe("book_flight idempotency_key", () => {
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.key).toBe(expectedKey);
     expect(keys).toEqual([expectedKey, expectedKey]);
+    // 503 ⇒ backoff sleep, no GET /bookings (nothing was committed)
+    expect(sleeps.length).toBe(1);
+    expect(sleeps[0]).toBeGreaterThan(0);
+    expect(client.listBookings).not.toHaveBeenCalled();
   });
 
   it("returns the same key when reconciled via GET /bookings", async () => {
