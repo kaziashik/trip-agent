@@ -521,6 +521,10 @@ export async function runAgent(
   }
 
   // ----- main loop -----
+  // Flow (assessment contract):
+  //   1) chat  → planner returns a tool call OR a final answer
+  //   2) if tool call → run tool, append {"tool","result"} to messages
+  //   3) repeat until final answer (or a clean StopEarly)
   try {
     while (finalContent === null) {
       startedAt = steps === 0 ? startedAt : now(); // keep the clock honest per cycle
@@ -537,6 +541,7 @@ export async function runAgent(
           "Stopped at the wall-clock cap.",
         );
 
+      // 1) chat
       const { toolCall, content } = await chatWithRetry();
       steps += 1;
 
@@ -548,6 +553,7 @@ export async function runAgent(
         );
       }
 
+      // Final answer → stop
       if (!toolCall) {
         finalContent = content ?? "Done.";
         malformedStreak = 0;
