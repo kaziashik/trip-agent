@@ -75,7 +75,7 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(some.results).toHaveLength(1);
   });
 
-  it("explains stale weather after a one-time refetch", () => {
+  it("STALE weather: refetch once + flag in answer", () => {
     expect(
       staleWeatherAnswerNote({ sawStale: true, refetched: true }),
     ).toMatch(/refetched once/i);
