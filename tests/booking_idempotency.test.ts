@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bookingKey, bookWithReconcile } from "../src/agent";
+import { bookingKey, bookWithReconcile, retryWaitMs } from "../src/agent";
 import type { MockApiClient } from "../src/client";
 
 function okHeaders(extra: Record<string, string> = {}): Headers {
@@ -106,6 +106,55 @@ describe("book_flight idempotency_key", () => {
     }
     // Found on first post-timeout reconcile — no second bookFlight.
     expect(client.bookFlight).toHaveBeenCalledTimes(1);
+  });
+
+  it("on 429 waits exactly Retry-After seconds then retries same key", async () => {
+    const expectedKey = bookingKey("goal", "FL-429", "Ada");
+    const sleeps: number[] = [];
+    let calls = 0;
+    const retryAfterHeaders = new Headers({
+      "x-request-id": "req-429",
+      "retry-after": "4",
+    });
+
+    const client = {
+      bookFlight: vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            status: 429,
+            body: { error: "rate_limited" },
+            headers: retryAfterHeaders,
+          };
+        }
+        return {
+          status: 200,
+          body: {},
+          headers: okHeaders(),
+        };
+      }),
+      listBookings: vi.fn(),
+    } as unknown as MockApiClient;
+
+    const outcome = await bookWithReconcile(
+      client,
+      async (ms) => {
+        sleeps.push(ms);
+      },
+      () => Date.now(),
+      () => {},
+      1,
+      { goal: "goal", seed: "7" },
+      { flight_id: "FL-429", passenger: "Ada" },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.key).toBe(expectedKey);
+    expect(sleeps).toEqual([
+      retryWaitMs(429, retryAfterHeaders, 0), // exactly 4000ms
+    ]);
+    expect(sleeps[0]).toBe(4000);
+    expect(client.listBookings).not.toHaveBeenCalled();
   });
 
   it("retries 503 with backoff and same key (nothing committed — no reconcile)", async () => {

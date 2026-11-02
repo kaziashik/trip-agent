@@ -128,10 +128,19 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     });
   });
 
-  it("waits exactly Retry-After seconds on 429", () => {
-    const headers = new Headers({ "retry-after": "3" });
-    expect(retryWaitMs(429, headers, 0)).toBe(3000);
+  it("waits exactly Retry-After seconds on 429 (no backoff / no jitter)", () => {
+    expect(isRetryableStatus(429)).toBe(true);
+    // Exact seconds → ms; attempt index must NOT change the wait.
+    expect(retryWaitMs(429, new Headers({ "retry-after": "3" }), 0)).toBe(3000);
+    expect(retryWaitMs(429, new Headers({ "retry-after": "3" }), 5)).toBe(3000);
     expect(retryWaitMs(429, new Headers({ "retry-after": "0" }), 2)).toBe(0);
+    expect(retryWaitMs(429, new Headers({ "retry-after": "1" }), 0)).toBe(1000);
+    // Must not equal exponential backoff for the same attempt.
+    expect(retryWaitMs(429, new Headers({ "retry-after": "3" }), 0)).not.toBe(
+      backoffMs(0),
+    );
+    // Missing header → cap (don't hammer), still not attempt-based backoff.
+    expect(retryWaitMs(429, new Headers(), 0)).toBe(CONFIG.backoffCapMs);
   });
 
   it("retries 503 with exponential backoff (nothing committed)", () => {
