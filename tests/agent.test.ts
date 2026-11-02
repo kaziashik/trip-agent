@@ -24,7 +24,7 @@ import {
   isCallTimeoutError,
   CONFIG,
 } from "../src/agent";
-import { validateResult } from "../src/types";
+import { validateResult, RESULT_JSON_KEYS } from "../src/types";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
@@ -316,6 +316,36 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(
       validateResult({ status: "success", answer: "x", bookings: [], steps: 1, cost: 2, errors: [] }),
     ).toEqual([]);
+  });
+
+  it("result.json fields: status, answer, bookings, steps, cost, errors", () => {
+    expect([...RESULT_JSON_KEYS]).toEqual([
+      "status",
+      "answer",
+      "bookings",
+      "steps",
+      "cost",
+      "errors",
+    ]);
+    const ok = {
+      status: "success" as const,
+      answer: "Found flights.",
+      bookings: [
+        { flight_id: "FL-1", passenger: "Ada", idempotency_key: "bk_x" },
+      ],
+      steps: 3,
+      cost: 120,
+      errors: [] as Array<{ code: string; message: string }>,
+    };
+    expect(validateResult(ok)).toEqual([]);
+    expect(Object.keys(ok).sort()).toEqual([...RESULT_JSON_KEYS].sort());
+
+    // Missing any contract field fails validation
+    for (const key of RESULT_JSON_KEYS) {
+      const copy = { ...ok } as Record<string, unknown>;
+      delete copy[key];
+      expect(validateResult(copy).some((e) => e.includes(key))).toBe(true);
+    }
   });
 
   it("writes files", async () => {

@@ -8,7 +8,15 @@ export type AgentResult = {
   errors: Array<{ code: string; message: string; step?: number }>;
 };
 
-
+/** Exact top-level fields graders expect in result.json (order for docs/tests). */
+export const RESULT_JSON_KEYS = [
+  "status",
+  "answer",
+  "bookings",
+  "steps",
+  "cost",
+  "errors",
+] as const;
 
 /** One JSONL line of the trace. */
 export type TraceLine = {
@@ -22,14 +30,16 @@ export type TraceLine = {
   outcome?: string;
 };
 
-
-
 /** Minimal validation — enough to catch a malformed result before submission. */
 export function validateResult(r: unknown): string[] {
   const errors: string[] = [];
   const o = r as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return ["result is not an object"];
-  if (!["success", "partial", "failed"].includes(o.status as string)) errors.push("status must be success|partial|failed");
+  for (const key of RESULT_JSON_KEYS) {
+    if (!(key in o)) errors.push(`missing field: ${key}`);
+  }
+  if (!["success", "partial", "failed"].includes(o.status as string))
+    errors.push("status must be success|partial|failed");
   if (typeof o.answer !== "string") errors.push("answer must be a string");
   if (!Array.isArray(o.bookings)) errors.push("bookings must be an array");
   if (typeof o.steps !== "number") errors.push("steps must be a number");
