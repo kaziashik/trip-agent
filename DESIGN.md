@@ -61,8 +61,8 @@ Related (not “caps” but bounded): `callTimeoutMs=10_000`, `malformedReaskLim
 
 ### One suggestion I rejected (and why)
 
-- **Rejected: “Rewrite the agent from scratch as a small state machine / separate packages (retry.ts, book.ts, loop.ts).”**  
-  Why: The brief says not to rewrite unless justified; the live walkthrough grades defending *this* codebase line by line. A greenfield split would burn the timebox, orphan starter comments/evals assumptions, and make it harder to explain “what the contractor left vs what I changed.” I kept one hardened `agent.ts` + thin `client.ts` and extracted only small pure helpers (e.g. `retryWaitMs`, `bookingKey`, `mergeRunBookingsFromServer`) that tests can pin.
+- **Rejected: retry every failed HTTP call the same way (including 400/401/403/422).**  
+  Why: those errors mean the request or key is wrong — retrying won’t fix them and can burn the rate limit. I only retry **429** (wait exactly `Retry-After`), **503**, and **timeouts**. For `book_flight` timeouts I reuse one `idempotency_key` and check `GET /bookings` first, because a blind retry with a new key double-books.
 
 ## Bug diary (required — at least 3 entries)
 
