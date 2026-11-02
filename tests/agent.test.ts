@@ -27,6 +27,8 @@ import {
 import {
   validateResult,
   validateTraceLine,
+  resolveAgentStatus,
+  AGENT_STATUS_MEANINGS,
   RESULT_JSON_KEYS,
   TRACE_LINE_KEYS,
 } from "../src/types";
@@ -321,6 +323,32 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(
       validateResult({ status: "success", answer: "x", bookings: [], steps: 1, cost: 2, errors: [] }),
     ).toEqual([]);
+  });
+
+  it("status meanings: success / partial (clean stop) / failed (impossible or fatal)", () => {
+    expect(Object.keys(AGENT_STATUS_MEANINGS).sort()).toEqual([
+      "failed",
+      "partial",
+      "success",
+    ]);
+    // Goal met always wins (e.g. reconcile recovered a booking after a soft stop)
+    expect(
+      resolveAgentStatus({ goalMet: true, stopStatus: "partial" }),
+    ).toBe("success");
+    expect(
+      resolveAgentStatus({ goalMet: true, stopStatus: null }),
+    ).toBe("success");
+    // Clean stop under caps / loop → partial
+    expect(
+      resolveAgentStatus({ goalMet: false, stopStatus: "partial" }),
+    ).toBe("partial");
+    // Impossible / fatal / unfinished without a clean stop → failed
+    expect(
+      resolveAgentStatus({ goalMet: false, stopStatus: "failed" }),
+    ).toBe("failed");
+    expect(
+      resolveAgentStatus({ goalMet: false, stopStatus: null }),
+    ).toBe("failed");
   });
 
   it("result.json fields: status, answer, bookings, steps, cost, errors", () => {

@@ -8,6 +8,29 @@ export type AgentResult = {
   errors: Array<{ code: string; message: string; step?: number }>;
 };
 
+/**
+ * Grader status meanings:
+ * - success — goal met
+ * - partial — clean stop (caps / loop / declined confirm) without hard failure
+ * - failed — impossible goal or fatal error
+ */
+export const AGENT_STATUS_MEANINGS = {
+  success: "Goal met (search done; booking completed if the goal required one)",
+  partial:
+    "Clean stop: step/wall/token cap, loop detected, or operator declined confirm",
+  failed:
+    "Impossible goal or fatal error (auth/validation, malformed burst, LLM down)",
+} as const;
+
+/** Map goal progress + StopEarly into the contract status. */
+export function resolveAgentStatus(opts: {
+  goalMet: boolean;
+  stopStatus: "partial" | "failed" | null;
+}): AgentResult["status"] {
+  if (opts.goalMet) return "success";
+  return opts.stopStatus ?? "failed";
+}
+
 /** Exact top-level fields graders expect in result.json (order for docs/tests). */
 export const RESULT_JSON_KEYS = [
   "status",

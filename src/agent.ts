@@ -18,7 +18,12 @@ import { promises as fs } from "fs";
 import { pathToFileURL } from "url";
 import { MockApiClient, type ChatMessage, type ChatResponse } from "./client";
 import { loadEnv } from "./loadEnv";
-import { validateResult, type AgentResult, type TraceLine } from "./types";
+import {
+  validateResult,
+  resolveAgentStatus,
+  type AgentResult,
+  type TraceLine,
+} from "./types";
 
 export type AgentArgs = {
   goal: string;
@@ -1340,9 +1345,8 @@ export async function runAgent(
     const goalMet = searchDone && (!intent.wantBooking || bookings.length > 0);
     // End-of-run reconcile may recover a booking the client thought failed —
     // prefer server truth over an earlier stopStatus when the goal is met.
-    const status: AgentResult["status"] = goalMet
-      ? "success"
-      : (stopStatus ?? "failed");
+    // success | partial (clean stop) | failed (impossible or fatal)
+    const status = resolveAgentStatus({ goalMet, stopStatus });
 
     const parts: string[] = [];
     if (finalContent) parts.push(finalContent);
