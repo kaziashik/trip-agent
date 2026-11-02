@@ -65,7 +65,7 @@ describe("book_flight idempotency_key", () => {
     expect(client.listBookings).toHaveBeenCalled();
   });
 
-  it("HANG: ~10s timeout after commit → GET /bookings (same key, no duplicate)", async () => {
+  it("timeout-after-commit: reconcile via GET /bookings; same key = no duplicate", async () => {
     const expectedKey = bookingKey("goal", "FL-9", "Ada");
     const client = {
       bookFlight: vi.fn(async () => {
@@ -104,8 +104,55 @@ describe("book_flight idempotency_key", () => {
       expect(outcome.replayed).toBe(true);
       expect(outcome.attempts).toBe(1);
     }
-    // Found on first post-timeout reconcile — no second bookFlight.
+    // Server already committed under our key → no second bookFlight (no duplicate).
     expect(client.bookFlight).toHaveBeenCalledTimes(1);
+    expect(client.listBookings).toHaveBeenCalled();
+  });
+
+  it("never uses a different key per attempt (classic double-book failure)", async () => {
+    // Classic bug: key_0 then key_1 → two bookings for same flight+passenger.
+    const stable = bookingKey("goal", "FL-DUP", "Ada");
+    expect(stable).not.toMatch(/_\d+$/);
+
+    const keys: string[] = [];
+    let calls = 0;
+    const client = {
+      bookFlight: vi.fn(async (args: { idempotency_key: string }) => {
+        keys.push(args.idempotency_key);
+        calls += 1;
+        if (calls === 1) {
+          const err = new Error("aborted");
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return {
+          status: 200,
+          body: { idempotent_replay: true },
+          headers: okHeaders(),
+        };
+      }),
+      listBookings: vi.fn(async () => ({
+        status: 200,
+        body: { bookings: [] },
+        headers: okHeaders(),
+      })),
+    } as unknown as MockApiClient;
+
+    await bookWithReconcile(
+      client,
+      async () => {},
+      () => Date.now(),
+      () => {},
+      1,
+      { goal: "goal", seed: "7" },
+      { flight_id: "FL-DUP", passenger: "Ada" },
+    );
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(stable);
+    expect(keys[1]).toBe(stable);
+    expect(keys[0]).toBe(keys[1]);
+    expect(new Set(keys).size).toBe(1);
   });
 
   it("on 429 waits exactly Retry-After seconds then retries same key", async () => {
