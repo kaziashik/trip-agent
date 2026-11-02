@@ -1,6 +1,6 @@
 # DESIGN.md — trip-agent
 
-Fill this in as you go. It is read before the debrief.
+Filled for submission. Read before the debrief / walkthrough.
 
 ## How I spent my time
 
