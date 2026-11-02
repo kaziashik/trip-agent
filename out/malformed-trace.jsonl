@@ -1,7 +1,0 @@
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":0,"action":"llm.chat","latency_ms":5466,"tokens":147,"retry_count":0,"request_id":"048fa4d2-6547-49fa-acbc-44b3194e31d1","outcome":"ok"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":1,"action":"search_flights","retry_count":0,"latency_ms":10021,"outcome":"retryable:timeout"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":1,"action":"search_flights","retry_count":1,"latency_ms":10004,"outcome":"retryable:timeout"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":1,"action":"search_flights","retry_count":2,"latency_ms":2147,"request_id":"c7f0ebc3-ca97-44c0-b179-f8c613b2e4c0","outcome":"ok"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":1,"action":"llm.chat","latency_ms":2125,"tokens":324,"retry_count":0,"request_id":"0a8deb58-dd3b-4c7a-b3f7-166c3e1995c2","outcome":"ok"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":2,"action":"get_weather","retry_count":0,"latency_ms":4602,"request_id":"b36a2491-a1cf-44f0-af0f-3071e727a4f9","outcome":"ok"}
-{"run_id":"c552974d-ef64-4201-8207-95e3df6b8fbb","step":2,"action":"llm.chat","latency_ms":2166,"tokens":381,"retry_count":0,"request_id":"22ebcdb6-4cb0-4e7e-8748-08e1d2d43c7c","outcome":"ok"}
