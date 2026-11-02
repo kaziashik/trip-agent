@@ -301,6 +301,68 @@ function stableStringify(value: unknown): string {
   );
 }
 
+/** Identical tool+args fingerprint for loop detection (book_flight excluded). */
+export function toolCallSignature(
+  name: string,
+  args: Record<string, unknown>,
+): string {
+  return `${name}:${stableStringify(args)}`;
+}
+
+/**
+ * Planner repeating the same read → suppress the HTTP call; after `limit`
+ * consecutive duplicates stop as **partial** (`model_loop_detected`).
+ */
+export function recordDuplicateRead(
+  priorConsecutive: number,
+  limit: number = CONFIG.duplicateReadLimit,
+): { consecutive: number; action: "suppress" | "stop_partial" } {
+  const consecutive = priorConsecutive + 1;
+  return {
+    consecutive,
+    action: consecutive >= limit ? "stop_partial" : "suppress",
+  };
+}
+
+/**
+ * Hard caps: always stop as **partial** (clean exit), never spin forever.
+ * Checked before each planner turn (and tokens again after chat).
+ */
+export function loopCapDecision(state: {
+  steps: number;
+  wallRemainingMs: number;
+  tokens: number;
+  maxSteps?: number;
+  maxTokens?: number;
+}):
+  | { stop: false }
+  | { stop: true; code: string; message: string } {
+  const maxSteps = state.maxSteps ?? CONFIG.maxSteps;
+  const maxTokens = state.maxTokens ?? CONFIG.maxTokens;
+  if (state.steps >= maxSteps) {
+    return {
+      stop: true,
+      code: "step_cap_reached",
+      message: `Stopped at the ${maxSteps}-step cap.`,
+    };
+  }
+  if (state.wallRemainingMs <= 0) {
+    return {
+      stop: true,
+      code: "wall_clock_exceeded",
+      message: "Stopped at the wall-clock cap.",
+    };
+  }
+  if (state.tokens > maxTokens) {
+    return {
+      stop: true,
+      code: "cost_budget_exceeded",
+      message: `Token budget exceeded (${state.tokens} > ${maxTokens}).`,
+    };
+  }
+  return { stop: false };
+}
+
 /**
  * Exponential backoff for 503 (and transport timeouts).
  * 503 means the server committed nothing — safe to retry the same request.
@@ -800,26 +862,13 @@ export async function runAgent(
   try {
     while (finalContent === null) {
       startedAt = steps === 0 ? startedAt : now(); // keep the clock honest per cycle
-      if (steps >= CONFIG.maxSteps)
-        throw new StopEarly(
-          "partial",
-          "step_cap_reached",
-          `Stopped at the ${CONFIG.maxSteps}-step cap.`,
-        );
-      if (budgetLeft() <= 0)
-        throw new StopEarly(
-          "partial",
-          "wall_clock_exceeded",
-          "Stopped at the wall-clock cap.",
-        );
-
-      // Stop before another planner call if the chat-usage budget is already spent.
-      if (tokens > CONFIG.maxTokens) {
-        throw new StopEarly(
-          "partial",
-          "cost_budget_exceeded",
-          `Token budget exceeded (${tokens} > ${CONFIG.maxTokens}).`,
-        );
+      const preCap = loopCapDecision({
+        steps,
+        wallRemainingMs: budgetLeft(),
+        tokens,
+      });
+      if (preCap.stop) {
+        throw new StopEarly("partial", preCap.code, preCap.message);
       }
 
       // 1) chat — usage.prompt_tokens + usage.completion_tokens feed the cost budget
@@ -834,10 +883,15 @@ export async function runAgent(
       }
 
       // Tool call requested but budget blown — do not spend more tools/planner turns.
-      if (tokens > CONFIG.maxTokens) {
+      const midCap = loopCapDecision({
+        steps,
+        wallRemainingMs: budgetLeft(),
+        tokens,
+      });
+      if (midCap.stop && midCap.code === "cost_budget_exceeded") {
         throw new StopEarly(
           "partial",
-          "cost_budget_exceeded",
+          midCap.code,
           `Token budget exceeded (${tokens} > ${CONFIG.maxTokens}) mid-task.`,
         );
       }
@@ -855,12 +909,16 @@ export async function runAgent(
       const { name, args: parsedArgs } = parsed;
       malformedStreak = 0;
 
-      // --- duplicate-read suppression ---
-      const signature = `${name}:${stableStringify(parsedArgs)}`;
+      // --- duplicate-read suppression (identical repeated actions) ---
+      const signature = toolCallSignature(name, parsedArgs);
       if (name !== "book_flight" && seenReadSignatures.has(signature)) {
-        consecutiveDuplicateReads += 1;
+        const dup = recordDuplicateRead(
+          consecutiveDuplicateReads,
+          CONFIG.duplicateReadLimit,
+        );
+        consecutiveDuplicateReads = dup.consecutive;
         trace({ step: steps, action: name, outcome: "duplicate_suppressed" });
-        if (consecutiveDuplicateReads >= CONFIG.duplicateReadLimit) {
+        if (dup.action === "stop_partial") {
           throw new StopEarly(
             "partial",
             "model_loop_detected",

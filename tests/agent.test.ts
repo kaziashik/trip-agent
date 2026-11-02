@@ -11,6 +11,9 @@ import {
   toolResultContent,
   parseToolArguments,
   malformedReaskDecision,
+  toolCallSignature,
+  recordDuplicateRead,
+  loopCapDecision,
   usageCost,
   normalizeSearchResults,
   sanitizeFreeText,
@@ -130,6 +133,47 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(malformedReaskDecision(2).action).toBe("reask");
     // Fourth consecutive malformed → fail clean (status failed, not crash)
     expect(malformedReaskDecision(3)).toEqual({ streak: 4, action: "fail" });
+  });
+
+  it("LOOP: detects identical repeated actions; caps stop as partial", () => {
+    const a = toolCallSignature("search_flights", {
+      origin: "MAD",
+      dest: "DUB",
+      date: "2026-11-25",
+    });
+    const b = toolCallSignature("search_flights", {
+      date: "2026-11-25",
+      dest: "DUB",
+      origin: "MAD",
+    });
+    expect(a).toBe(b);
+
+    // Suppress until limit, then partial stop
+    expect(recordDuplicateRead(0, 3).action).toBe("suppress");
+    expect(recordDuplicateRead(1, 3).action).toBe("suppress");
+    expect(recordDuplicateRead(2, 3)).toEqual({
+      consecutive: 3,
+      action: "stop_partial",
+    });
+    expect(CONFIG.duplicateReadLimit).toBeGreaterThan(0);
+
+    // Caps → partial codes (never spin forever)
+    expect(
+      loopCapDecision({ steps: CONFIG.maxSteps, wallRemainingMs: 1, tokens: 0 }),
+    ).toMatchObject({ stop: true, code: "step_cap_reached" });
+    expect(
+      loopCapDecision({ steps: 0, wallRemainingMs: 0, tokens: 0 }),
+    ).toMatchObject({ stop: true, code: "wall_clock_exceeded" });
+    expect(
+      loopCapDecision({
+        steps: 0,
+        wallRemainingMs: 1,
+        tokens: CONFIG.maxTokens + 1,
+      }),
+    ).toMatchObject({ stop: true, code: "cost_budget_exceeded" });
+    expect(
+      loopCapDecision({ steps: 0, wallRemainingMs: 1, tokens: 0 }),
+    ).toEqual({ stop: false });
   });
 
   it("formats tool results in the planner convention", () => {
