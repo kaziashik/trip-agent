@@ -42,7 +42,42 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
       "--trace",
       "t.jsonl",
     ]);
-    expect(args).toMatchObject({ goal: "Find a flight", seed: "7", autoConfirm: true });
+    expect(args).toMatchObject({
+      goal: "Find a flight",
+      seed: "7",
+      autoConfirm: true,
+      output: "r.json",
+      trace: "t.jsonl",
+    });
+  });
+
+  it("README eval-command fence matches grader contract (npm run agent + appended flags)", async () => {
+    const readme = await fs.readFile(
+      path.join(__dirname, "..", "README.md"),
+      "utf8",
+    );
+    // Graders look for a fenced ```eval-command block with the exact entrypoint.
+    expect(readme).toMatch(/```eval-command\s*\nnpm run agent\s*\n```/);
+    expect(readme).toMatch(
+      /--goal .* --seed .* --auto-confirm --output result\.json --trace trace\.jsonl/,
+    );
+    // Defaults match what graders write when flags are present.
+    const graded = parseArgs([
+      "--goal",
+      "x",
+      "--seed",
+      "1",
+      "--auto-confirm",
+      "--output",
+      "result.json",
+      "--trace",
+      "trace.jsonl",
+    ]);
+    expect(graded).toMatchObject({
+      autoConfirm: true,
+      output: "result.json",
+      trace: "trace.jsonl",
+    });
   });
 
   it("does not retry auth/validation errors (401/403/400/422)", () => {
