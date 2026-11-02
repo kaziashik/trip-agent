@@ -51,6 +51,38 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     });
   });
 
+  it("does not change the CLI flag contract (exact grader flag names)", () => {
+    // Locked names — do not rename to --g, --confirm, --out, etc.
+    const args = parseArgs([
+      "--goal",
+      "g",
+      "--seed",
+      "s",
+      "--auto-confirm",
+      "--output",
+      "result.json",
+      "--trace",
+      "trace.jsonl",
+    ]);
+    expect(Object.keys(args).sort()).toEqual([
+      "autoConfirm",
+      "goal",
+      "output",
+      "seed",
+      "trace",
+    ]);
+    expect(args.autoConfirm).toBe(true);
+    // Defaults when graders omit paths still match contract filenames
+    expect(parseArgs(["--goal", "g"]).output).toBe("result.json");
+    expect(parseArgs(["--goal", "g"]).trace).toBe("trace.jsonl");
+    expect(parseArgs(["--goal", "g"]).autoConfirm).toBe(false);
+    // Unknown / renamed flags must NOT be treated as the contract flags
+    expect(() => parseArgs(["--prompt", "x"])).toThrow(/--goal is required/);
+    expect(
+      parseArgs(["--goal", "g", "--confirm"]).autoConfirm,
+    ).toBe(false);
+  });
+
   it("README eval-command fence matches grader contract (npm run agent + appended flags)", async () => {
     const readme = await fs.readFile(
       path.join(__dirname, "..", "README.md"),
