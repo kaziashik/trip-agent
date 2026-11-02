@@ -4,6 +4,7 @@ import {
   writeJson,
   TraceWriter,
   isRetryableStatus,
+  fatalHttpCode,
   retryWaitMs,
 } from "../src/agent";
 import { validateResult } from "../src/types";
@@ -34,6 +35,8 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(isRetryableStatus(422)).toBe(false);
     expect(isRetryableStatus(429)).toBe(true);
     expect(isRetryableStatus(503)).toBe(true);
+    expect(fatalHttpCode(400)).toBe("bad_request");
+    expect(fatalHttpCode(403)).toBe("revoked");
   });
 
   it("waits exactly Retry-After seconds on 429", () => {

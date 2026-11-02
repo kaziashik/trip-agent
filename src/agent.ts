@@ -217,6 +217,14 @@ export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 503;
 }
 
+export function fatalHttpCode(status: number): string {
+  if (status === 400) return "bad_request";
+  if (status === 401) return "unauthorized";
+  if (status === 403) return "revoked";
+  if (status === 422) return "invalid_request";
+  return `http_${status}`;
+}
+
 /**
  * How long to sleep before retrying.
  * 429: wait EXACTLY Retry-After seconds (rate limit: 60/min, 5000/day).
@@ -370,10 +378,19 @@ export async function runAgent(
           await doSleep(waitMs);
           continue;
         }
+        // 400 bad_request / 403 revoked / 401 / 422 — fail immediately, no retry.
+        trace({
+          step: steps,
+          action: "llm.chat",
+          latency_ms: latency,
+          retry_count: attempt,
+          request_id: requestId,
+          outcome: `fatal:${fatalHttpCode(res.status)}`,
+        });
         throw new StopEarly(
           "failed",
-          "llm_client_error",
-          `Planner API rejected the request (HTTP ${res.status}).`,
+          fatalHttpCode(res.status),
+          `Planner API rejected the request (HTTP ${res.status}, ${fatalHttpCode(res.status)}) — not retried.`,
         );
       } catch (err) {
         if (err instanceof StopEarly) throw err;
@@ -445,11 +462,20 @@ export async function runAgent(
           await doSleep(waitMs);
           continue;
         }
+        // 400 / 403 / 401 / 422 — return immediately; do not loop/retry.
         const errBody = res.body as { error?: { message?: string } };
+        trace({
+          step: steps,
+          action: name,
+          retry_count: attempt,
+          latency_ms: latency,
+          request_id: requestId,
+          outcome: `fatal:${fatalHttpCode(res.status)}`,
+        });
         return {
           ok: false,
-          error: errBody?.error?.message ?? `HTTP ${res.status}`,
-          code: `http_${res.status}`,
+          error: errBody?.error?.message ?? `HTTP ${res.status} (${fatalHttpCode(res.status)})`,
+          code: fatalHttpCode(res.status),
           attempts,
         };
       } catch (err) {
@@ -935,10 +961,19 @@ async function bookWithReconcile(
         await doSleep(retryWaitMs(res.status, res.headers, attempt));
         continue;
       }
+      // 400 bad_request / 403 revoked / etc. — never retry booking.
+      trace({
+        step,
+        action: "book_flight",
+        latency_ms: latency,
+        retry_count: attempt,
+        request_id: requestId,
+        outcome: `fatal:${fatalHttpCode(res.status)}`,
+      });
       return {
         ok: false,
-        error: `HTTP ${res.status} (non-retryable)`,
-        code: `http_${res.status}`,
+        error: `HTTP ${res.status} (${fatalHttpCode(res.status)}, non-retryable)`,
+        code: fatalHttpCode(res.status),
         attempts: attempt + 1,
       };
     } catch (err) {
