@@ -10,6 +10,7 @@ import {
   backoffMs,
   toolResultContent,
   parseToolArguments,
+  malformedReaskDecision,
   usageCost,
   normalizeSearchResults,
   sanitizeFreeText,
@@ -116,6 +117,19 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
       parseToolArguments("search_flights", JSON.stringify({ origin: "LIS" })).ok,
     ).toBe(false);
     expect(parseToolArguments("explode_ship", "{}").ok).toBe(false);
+    expect(parseToolArguments("get_weather", '{"city":1,"date":"x"}').ok).toBe(
+      false,
+    );
+  });
+
+  it("BAD JSON: re-asks at most 3 times then fails clean", () => {
+    expect(CONFIG.malformedReaskLimit).toBe(3);
+    // Burst of three malformed → three reasks (eval 05 pattern)
+    expect(malformedReaskDecision(0).action).toBe("reask");
+    expect(malformedReaskDecision(1).action).toBe("reask");
+    expect(malformedReaskDecision(2).action).toBe("reask");
+    // Fourth consecutive malformed → fail clean (status failed, not crash)
+    expect(malformedReaskDecision(3)).toEqual({ streak: 4, action: "fail" });
   });
 
   it("formats tool results in the planner convention", () => {
