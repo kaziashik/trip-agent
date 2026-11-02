@@ -10,6 +10,7 @@ import {
   toolResultContent,
   parseToolArguments,
   usageCost,
+  normalizeSearchResults,
   CONFIG,
 } from "../src/agent";
 import { validateResult } from "../src/types";
@@ -48,6 +49,19 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(usageCost({ prompt_tokens: 100, completion_tokens: 40 })).toBe(140);
     expect(usageCost(undefined)).toBe(0);
     expect(CONFIG.maxTokens).toBeLessThanOrEqual(100_000);
+  });
+
+  it("treats empty search results as valid, not an error", () => {
+    const empty = normalizeSearchResults({ results: [] });
+    expect(empty.empty).toBe(true);
+    expect(empty.results).toEqual([]);
+    const missing = normalizeSearchResults({});
+    expect(missing.empty).toBe(true);
+    const some = normalizeSearchResults({
+      results: [{ flight_id: "FL1", price_eur: 10, nonstop: true }],
+    });
+    expect(some.empty).toBe(false);
+    expect(some.results).toHaveLength(1);
   });
 
   it("parses tool arguments and treats corrupt/missing args as faults", () => {
