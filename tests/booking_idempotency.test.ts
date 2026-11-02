@@ -65,7 +65,7 @@ describe("book_flight idempotency_key", () => {
     expect(client.listBookings).toHaveBeenCalled();
   });
 
-  it("treats GET /bookings as truth right after a timeout-after-commit", async () => {
+  it("HANG: ~10s timeout after commit → GET /bookings (same key, no duplicate)", async () => {
     const expectedKey = bookingKey("goal", "FL-9", "Ada");
     const client = {
       bookFlight: vi.fn(async () => {

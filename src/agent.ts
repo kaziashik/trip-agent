@@ -75,7 +75,13 @@ export const CONFIG = {
   maxWallMs: 90_000,
   // Docs: scripted planner usage is small; sensible budget ~1e4–1e5 tokens.
   maxTokens: 100_000,
-  callTimeoutMs: 10_000, // matches the documented server behaviour (timeouts sleep ~12s)
+  /**
+   * Per-call AbortSignal timeout (~10s).
+   * SLOW: response delayed but still within window (or times out before commit).
+   * HANG: server may sleep ~12s *after* committing (esp. book_flight) — our
+   * 10s abort fires first, so treat TimeoutError as ambiguous and reconcile.
+   */
+  callTimeoutMs: 10_000,
   chatRetries: 5,
   readRetries: 2,
   malformedReaskLimit: 3,
@@ -83,6 +89,14 @@ export const CONFIG = {
   backoffBaseMs: 400,
   backoffCapMs: 8_000,
 };
+
+/** AbortSignal.timeout / fetch abort from our ~10s client deadline. */
+export function isCallTimeoutError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "TimeoutError" || err.name === "AbortError")
+  );
+}
 
 /** Cost comes only from /llm/chat usage (tools have none). */
 export function usageCost(
@@ -640,10 +654,7 @@ export async function runAgent(
         );
       } catch (err) {
         if (err instanceof StopEarly) throw err;
-        const isTimeout =
-          err instanceof Error &&
-          (err.name === "TimeoutError" || err.name === "AbortError");
-        if (!isTimeout) throw err;
+        if (!isCallTimeoutError(err)) throw err;
         lastError = "timeout";
         trace({
           step: steps,
@@ -725,10 +736,7 @@ export async function runAgent(
           attempts,
         };
       } catch (err) {
-        const isTimeout =
-          err instanceof Error &&
-          (err.name === "TimeoutError" || err.name === "AbortError");
-        if (!isTimeout) throw err;
+        if (!isCallTimeoutError(err)) throw err;
         trace({
           step: steps,
           action: name,
@@ -1433,10 +1441,9 @@ export async function bookWithReconcile(
         key,
       };
     } catch (err) {
-      const isTimeout =
-        err instanceof Error &&
-        (err.name === "TimeoutError" || err.name === "AbortError");
-      if (!isTimeout) throw err;
+      if (!isCallTimeoutError(err)) throw err;
+      // HANG fault: server may have committed then slept ~12s; our ~10s
+      // client timeout aborts first. Treat as ambiguous → GET /bookings.
       lastFailure = "timeout";
       latency = now() - started;
       trace({
@@ -1445,9 +1452,8 @@ export async function bookWithReconcile(
         latency_ms: latency,
         retry_count: attempt,
         idempotency_key: key,
-        outcome: "timeout",
+        outcome: "timeout:possible_hang_after_commit",
       });
-      // Timeout is ambiguous (may have committed). Ask GET /bookings first.
       const hit = await reconcileBookingViaList(
         client,
         runArgs,

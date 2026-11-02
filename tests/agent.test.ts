@@ -16,6 +16,7 @@ import {
   sanitizeToolResult,
   isFlightFromSearch,
   staleWeatherAnswerNote,
+  isCallTimeoutError,
   CONFIG,
 } from "../src/agent";
 import { validateResult } from "../src/types";
@@ -141,6 +142,18 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     );
     // Missing header → cap (don't hammer), still not attempt-based backoff.
     expect(retryWaitMs(429, new Headers(), 0)).toBe(CONFIG.backoffCapMs);
+  });
+
+  it("uses ~10s client timeout so HANG (~12s after commit) aborts first", () => {
+    expect(CONFIG.callTimeoutMs).toBe(10_000);
+    expect(CONFIG.callTimeoutMs).toBeLessThan(12_000);
+    const timeoutErr = new Error("aborted");
+    timeoutErr.name = "TimeoutError";
+    const abortErr = new Error("aborted");
+    abortErr.name = "AbortError";
+    expect(isCallTimeoutError(timeoutErr)).toBe(true);
+    expect(isCallTimeoutError(abortErr)).toBe(true);
+    expect(isCallTimeoutError(new Error("nope"))).toBe(false);
   });
 
   it("retries 503 with exponential backoff (nothing committed)", () => {
