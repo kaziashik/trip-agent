@@ -2,6 +2,10 @@
  * Thin HTTP client for the mock APIs. Typed request/response envelopes ONLY —
  * deliberately NO retries, NO validation, NO timeouts. That reliability work
  * is the assessment; write it in your agent (src/agent.ts).
+ *
+ * Seed contract (docs):
+ *   - chat  → seed in JSON body
+ *   - tools → seed as ?seed= query param (only way to pin tools)
  */
 
 export type ChatMessage = {
@@ -26,10 +30,6 @@ export type ApiEnvelope<T> = {
   body: T | { error: { code: string; message: string } };
 };
 
-
-
-
-
 export class MockApiClient {
   constructor(
     private opts: { baseUrl: string; apiKey: string; fetchImpl?: typeof fetch },
@@ -41,13 +41,17 @@ export class MockApiClient {
       method?: string;
       body?: unknown;
       signal?: AbortSignal;
+      /** When set, appended as ?seed= (required for tool endpoints). */
       seed?: string | number;
     } = {},
   ): Promise<ApiEnvelope<T>> {
     // Tolerate a trailing slash in TRIP_AGENT_BASE_URL (no "//api/..." 308 round trips).
     const base = this.opts.baseUrl.replace(/\/+$/, "");
     const url = new URL(`${base}${path}`);
-    if (init.seed !== undefined) url.searchParams.set("seed", `${init.seed}`);
+    if (init.seed !== undefined && init.seed !== "") {
+      url.searchParams.set("seed", `${init.seed}`);
+    }
+    // Every mock call must carry Bearer auth. Missing/unknown key → HTTP 401.
     const res = await (this.opts.fetchImpl ?? fetch)(url.toString(), {
       method: init.method ?? "POST",
       headers: {
@@ -57,14 +61,22 @@ export class MockApiClient {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: init.signal,
     });
-    const body = (await res
-      .json()
-      .catch(() => ({
-        error: { code: "bad_json", message: "response was not JSON" },
-      }))) as T;
+    const body = (await res.json().catch(() => ({
+      error: { code: "bad_json", message: "response was not JSON" },
+    }))) as T;
+
+    const requestId = res.headers.get("x-request-id") ?? "(missing)";
+    const seedUsed = res.headers.get("x-seed");
+    console.error(
+      `[mock] ${init.method ?? "POST"} ${path} → ${res.status} x-request-id=${requestId}` +
+        (seedUsed ? ` x-seed=${seedUsed}` : "") +
+        (init.seed !== undefined && init.seed !== "" ? ` ?seed=${init.seed}` : ""),
+    );
+
     return { status: res.status, headers: res.headers, body };
   }
 
+  /** Planner: pin seed in the JSON body (not via query). */
   chat(
     messages: ChatMessage[],
     opts: { seed?: string | number; signal?: AbortSignal } = {},
@@ -72,19 +84,22 @@ export class MockApiClient {
     return this.request<ChatResponse>("/api/mock/v1/llm/chat", {
       body: {
         messages,
-        ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+        ...(opts.seed !== undefined && opts.seed !== ""
+          ? { seed: opts.seed }
+          : {}),
       },
       signal: opts.signal,
     });
   }
 
+  /** Tools: pin seed with ?seed= */
   searchFlights(
     args: { origin: string; dest: string; date: string },
     opts: { seed?: string | number; signal?: AbortSignal } = {},
   ) {
     return this.request<{ results: unknown[] }>(
       "/api/mock/v1/tools/search_flights",
-      { body: args, ...opts },
+      { body: args, seed: opts.seed, signal: opts.signal },
     );
   }
 
@@ -98,7 +113,11 @@ export class MockApiClient {
       temperature_c: number;
       conditions: string;
       stale: boolean;
-    }>("/api/mock/v1/tools/get_weather", { body: args, ...opts });
+    }>("/api/mock/v1/tools/get_weather", {
+      body: args,
+      seed: opts.seed,
+      signal: opts.signal,
+    });
   }
 
   bookFlight(
@@ -114,7 +133,11 @@ export class MockApiClient {
         booked_at: string;
       };
       idempotent_replay?: boolean;
-    }>("/api/mock/v1/tools/book_flight", { body: args, ...opts });
+    }>("/api/mock/v1/tools/book_flight", {
+      body: args,
+      seed: opts.seed,
+      signal: opts.signal,
+    });
   }
 
   listBookings(opts: { seed?: string | number; signal?: AbortSignal } = {}) {
@@ -126,6 +149,10 @@ export class MockApiClient {
         idempotency_key: string;
         booked_at: string;
       }>;
-    }>("/api/mock/v1/tools/bookings", { method: "GET", ...opts });
+    }>("/api/mock/v1/tools/bookings", {
+      method: "GET",
+      seed: opts.seed,
+      signal: opts.signal,
+    });
   }
 }

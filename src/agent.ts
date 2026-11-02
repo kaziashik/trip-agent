@@ -1027,6 +1027,7 @@ async function bookWithReconcile(
 
   // Both attempts failed: reconcile against server-side truth before giving up.
   const listed = await client.listBookings({
+    seed: runArgs.seed,
     signal: AbortSignal.timeout(CONFIG.callTimeoutMs),
   });
   if (listed.status === 200) {
