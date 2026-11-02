@@ -7,6 +7,7 @@ import {
   fatalHttpCode,
   retryWaitMs,
   toolResultContent,
+  parseToolArguments,
 } from "../src/agent";
 import { validateResult } from "../src/types";
 import { promises as fs } from "fs";
@@ -38,6 +39,21 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(isRetryableStatus(503)).toBe(true);
     expect(fatalHttpCode(400)).toBe("bad_request");
     expect(fatalHttpCode(403)).toBe("revoked");
+  });
+
+  it("parses tool arguments and treats corrupt/missing args as faults", () => {
+    expect(
+      parseToolArguments(
+        "search_flights",
+        JSON.stringify({ origin: "LIS", dest: "TYO", date: "2026-11-03" }),
+      ).ok,
+    ).toBe(true);
+    expect(parseToolArguments("search_flights", "{not-json").ok).toBe(false);
+    expect(parseToolArguments("search_flights", "[]").ok).toBe(false);
+    expect(
+      parseToolArguments("search_flights", JSON.stringify({ origin: "LIS" })).ok,
+    ).toBe(false);
+    expect(parseToolArguments("explode_ship", "{}").ok).toBe(false);
   });
 
   it("formats tool results in the planner convention", () => {

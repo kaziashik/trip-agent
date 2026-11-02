@@ -1,0 +1,8 @@
+{
+  "status": "success",
+  "answer": "Found 3 flight option(s) from Madrid to Dublin on 2026-11-25. Weather in Dublin: 24.6°C, light rain.",
+  "bookings": [],
+  "steps": 3,
+  "cost": 852,
+  "errors": []
+}
