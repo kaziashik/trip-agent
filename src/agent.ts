@@ -252,9 +252,11 @@ export function parseGoal(goalText: string, now = new Date()): GoalIntent {
 
 const REDACTED = "[redacted: instruction-like content removed]";
 
+/** Instruction-like spans in tool notes — strip before they re-enter chat. */
 const INJECTION_PATTERNS: RegExp[] = [
   /[^.!?\n]*\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions?[^.!?\n]*/gi,
   /[^.!?\n]*\b(?:do\s+not\s+follow|override)\s+(?:your\s+)?(?:system\s+)?(?:instructions?|prompt)[^.!?\n]*/gi,
+  /[^.!?\n]*\bfollow\s+(?:these|my|new)\s+instructions?\b[^.!?\n]*/gi,
   /[^.!?\n]*\byou\s+are\s+now\b[^.!?\n]*/gi,
   /(?:^|\n)\s*(?:system|developer)\s*:\s*[^\n]*/gi,
 ];
@@ -266,6 +268,11 @@ export function sanitizeFreeText(text: string): string {
     out = out.replace(re, REDACTED);
   }
   return out;
+}
+
+/** True if sanitization removed instruction-like content (for tests / traces). */
+export function hadInstructionLikeText(text: string): boolean {
+  return sanitizeFreeText(text) !== text;
 }
 
 /** Deep-walk tool JSON and sanitize every string before it re-enters chat. */
