@@ -1064,27 +1064,66 @@ async function bookWithReconcile(
 // CLI plumbing
 // ---------------------------------------------------------------------------
 
+function emptyFailedResult(
+  code: string,
+  message: string,
+): AgentResult {
+  return {
+    status: "failed",
+    answer: message,
+    bookings: [],
+    steps: 0,
+    cost: 0,
+    errors: [{ code, message }],
+  };
+}
+
+/** Always flushes trace.jsonl, even if the agent throws. */
 export async function parseAndRun(args: AgentArgs): Promise<AgentResult> {
   const runId = randomUUID();
   const trace = new TraceWriter(args.trace, runId);
-  const result = await runAgent(
-    {
-      goal: args.goal,
-      seed: args.seed,
-      autoConfirm: args.autoConfirm,
-      trace: (line) => trace.write(line as Omit<TraceLine, "run_id">),
-    },
-    { confirm: args.autoConfirm ? async () => true : undefined },
+  let result = emptyFailedResult(
+    "no_result",
+    "Agent stopped before producing a result.",
   );
-  await trace.close();
+  try {
+    result = await runAgent(
+      {
+        goal: args.goal,
+        seed: args.seed,
+        autoConfirm: args.autoConfirm,
+        trace: (line) => trace.write(line as Omit<TraceLine, "run_id">),
+      },
+      { confirm: args.autoConfirm ? async () => true : undefined },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    result = emptyFailedResult("internal_error", message);
+    result.answer = `Unexpected error: ${message}`;
+  } finally {
+    await trace.close();
+  }
   return result;
 }
 
+/** Always writes result.json (and parseAndRun always writes trace.jsonl). */
 async function main() {
   loadEnv();
   const args = parseArgs(process.argv.slice(2));
-  const result = await parseAndRun(args);
-  await writeJson(args.output, result);
+  let result = emptyFailedResult(
+    "startup_error",
+    "Failed before the agent produced a result.",
+  );
+  try {
+    result = await parseAndRun(args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(err);
+    result = emptyFailedResult("startup_error", message);
+    result.answer = `Startup/run failure: ${message}`;
+  } finally {
+    await writeJson(args.output, result);
+  }
   process.exit(0);
 }
 
@@ -1093,7 +1132,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main().catch((err) => {
+  main().catch(async (err) => {
     console.error(err);
     process.exit(1);
   });

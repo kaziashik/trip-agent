@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseArgs,
+  parseAndRun,
   writeJson,
   TraceWriter,
   isRetryableStatus,
@@ -90,5 +91,30 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     await t.close();
     expect(JSON.parse(await fs.readFile(path.join(dir, "r.json"), "utf8"))).toEqual({ ok: true });
     expect(await fs.readFile(path.join(dir, "t.jsonl"), "utf8")).toContain("search_flights");
+  });
+
+  it("still writes trace.jsonl when the agent throws (try/finally)", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "trip-"));
+    const tracePath = path.join(dir, "trace.jsonl");
+    const prevKey = process.env.TRIP_AGENT_API_KEY;
+    const prevUrl = process.env.TRIP_AGENT_BASE_URL;
+    delete process.env.TRIP_AGENT_API_KEY;
+    delete process.env.TRIP_AGENT_BASE_URL;
+    try {
+      const result = await parseAndRun({
+        goal: "Find a flight",
+        autoConfirm: true,
+        output: path.join(dir, "result.json"),
+        trace: tracePath,
+      });
+      expect(result.status).toBe("failed");
+      // finally must have flushed the trace file even though runAgent threw
+      await expect(fs.stat(tracePath)).resolves.toBeTruthy();
+    } finally {
+      if (prevKey === undefined) delete process.env.TRIP_AGENT_API_KEY;
+      else process.env.TRIP_AGENT_API_KEY = prevKey;
+      if (prevUrl === undefined) delete process.env.TRIP_AGENT_BASE_URL;
+      else process.env.TRIP_AGENT_BASE_URL = prevUrl;
+    }
   });
 });
