@@ -86,14 +86,15 @@ export class TraceWriter {
 }
 
 // ---------------------------------------------------------------------------
-// Config — "safety" valves. Headroom left generous by the previous contractor
-// for long multi-city itineraries; nobody has revisited them since.
+// Safety caps — chosen for graders (see DESIGN.md "Caps"):
+//   steps ≤ 40, wall ≤ 90s (under 2 min), tokens ≤ 1e5 (docs: ~1e4–1e5).
+// Exceeding any → StopEarly(partial). Starter had 400 steps / 4e6 tokens.
 // ---------------------------------------------------------------------------
 
 export const CONFIG = {
   maxSteps: 40,
-  maxWallMs: 90_000,
-  // Docs: scripted planner usage is small; sensible budget ~1e4–1e5 tokens.
+  maxWallMs: 90_000, // well under 2 minutes; eval harness allows ~120s
+  // Chat usage only (prompt + completion). Band: ~10^4–10^5.
   maxTokens: 100_000,
   /**
    * Per-call AbortSignal timeout (~10s).

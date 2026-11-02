@@ -133,6 +133,14 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
   it("derives cost budget from chat usage tokens only", () => {
     expect(usageCost({ prompt_tokens: 100, completion_tokens: 40 })).toBe(140);
     expect(usageCost(undefined)).toBe(0);
+  });
+
+  it("caps: steps / wall / tokens match DESIGN.md (under 2 min, ~1e4–1e5 tokens)", () => {
+    expect(CONFIG.maxSteps).toBe(40);
+    expect(CONFIG.maxWallMs).toBe(90_000);
+    expect(CONFIG.maxWallMs).toBeLessThan(120_000); // well under 2 minutes
+    expect(CONFIG.maxTokens).toBe(100_000);
+    expect(CONFIG.maxTokens).toBeGreaterThanOrEqual(10_000);
     expect(CONFIG.maxTokens).toBeLessThanOrEqual(100_000);
   });
 
