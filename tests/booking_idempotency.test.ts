@@ -37,7 +37,12 @@ describe("book_flight idempotency_key", () => {
           headers: okHeaders(),
         };
       }),
-      listBookings: vi.fn(),
+      // After timeout we ask GET /bookings; empty → safe to retry same key.
+      listBookings: vi.fn(async () => ({
+        status: 200,
+        body: { bookings: [] },
+        headers: okHeaders(),
+      })),
     } as unknown as MockApiClient;
 
     const outcome = await bookWithReconcile(
@@ -57,7 +62,50 @@ describe("book_flight idempotency_key", () => {
       expect(outcome.replayed).toBe(true);
     }
     expect(keys).toEqual([expectedKey, expectedKey]);
-    expect(client.listBookings).not.toHaveBeenCalled();
+    expect(client.listBookings).toHaveBeenCalled();
+  });
+
+  it("treats GET /bookings as truth right after a timeout-after-commit", async () => {
+    const expectedKey = bookingKey("goal", "FL-9", "Ada");
+    const client = {
+      bookFlight: vi.fn(async () => {
+        const err = new Error("aborted");
+        err.name = "TimeoutError";
+        throw err;
+      }),
+      listBookings: vi.fn(async () => ({
+        status: 200,
+        body: {
+          bookings: [
+            {
+              flight_id: "FL-9",
+              passenger: "Ada",
+              idempotency_key: expectedKey,
+            },
+          ],
+        },
+        headers: okHeaders(),
+      })),
+    } as unknown as MockApiClient;
+
+    const outcome = await bookWithReconcile(
+      client,
+      async () => {},
+      () => Date.now(),
+      () => {},
+      1,
+      { goal: "goal", seed: "7" },
+      { flight_id: "FL-9", passenger: "Ada" },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.key).toBe(expectedKey);
+      expect(outcome.replayed).toBe(true);
+      expect(outcome.attempts).toBe(1);
+    }
+    // Found on first post-timeout reconcile — no second bookFlight.
+    expect(client.bookFlight).toHaveBeenCalledTimes(1);
   });
 
   it("reuses the same key on retry after HTTP 503 then success", async () => {
@@ -132,12 +180,11 @@ describe("book_flight idempotency_key", () => {
       expect(outcome.key).not.toBe("reconciled");
       expect(outcome.replayed).toBe(true);
     }
-    expect(client.bookFlight).toHaveBeenCalledTimes(2);
-    const firstKey = (client.bookFlight as ReturnType<typeof vi.fn>).mock
-      .calls[0][0].idempotency_key;
-    const secondKey = (client.bookFlight as ReturnType<typeof vi.fn>).mock
-      .calls[1][0].idempotency_key;
-    expect(firstKey).toBe(expectedKey);
-    expect(secondKey).toBe(expectedKey);
+    // Timeout → GET /bookings finds it immediately (no need for a 2nd book).
+    expect(client.bookFlight).toHaveBeenCalledTimes(1);
+    expect(
+      (client.bookFlight as ReturnType<typeof vi.fn>).mock.calls[0][0]
+        .idempotency_key,
+    ).toBe(expectedKey);
   });
 });

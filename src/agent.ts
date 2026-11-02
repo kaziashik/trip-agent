@@ -340,6 +340,99 @@ export function bookingKey(
   return `bk_${createHash("sha256").update(`${goal}|${flightId}|${passenger}`).digest("hex").slice(0, 16)}`;
 }
 
+export type ServerBookingRow = {
+  flight_id: string;
+  passenger: string;
+  idempotency_key?: string;
+};
+
+/** Prefer idempotency_key; fall back to flight_id + passenger. */
+export function findBookingOnServer(
+  server: ServerBookingRow[],
+  want: { flight_id: string; passenger: string; idempotency_key: string },
+): ServerBookingRow | undefined {
+  if (want.idempotency_key) {
+    const byKey = server.find((b) => b.idempotency_key === want.idempotency_key);
+    if (byKey) return byKey;
+  }
+  return server.find(
+    (b) => b.flight_id === want.flight_id && b.passenger === want.passenger,
+  );
+}
+
+/**
+ * Sync this run's bookings with GET /bookings. Only touches attempts / local
+ * claims from this run — never imports unrelated historical bookings.
+ */
+export function mergeRunBookingsFromServer(
+  local: AgentResult["bookings"],
+  attempted: Array<{
+    flight_id: string;
+    passenger: string;
+    idempotency_key: string;
+  }>,
+  server: ServerBookingRow[],
+): { bookings: AgentResult["bookings"]; recovered: number } {
+  const out: AgentResult["bookings"] = [];
+  const seen = new Set<string>();
+  let recovered = 0;
+
+  const push = (row: {
+    flight_id: string;
+    passenger: string;
+    idempotency_key: string;
+  }) => {
+    if (seen.has(row.idempotency_key)) return;
+    seen.add(row.idempotency_key);
+    out.push(row);
+  };
+
+  for (const a of attempted) {
+    const hit = findBookingOnServer(server, a);
+    if (!hit) continue;
+    const wasLocal = local.some(
+      (b) =>
+        (b.idempotency_key && b.idempotency_key === a.idempotency_key) ||
+        (b.flight_id === a.flight_id && b.passenger === a.passenger),
+    );
+    if (!wasLocal) recovered += 1;
+    push({
+      flight_id: hit.flight_id,
+      passenger: hit.passenger,
+      idempotency_key: hit.idempotency_key ?? a.idempotency_key,
+    });
+  }
+
+  for (const b of local) {
+    const key =
+      b.idempotency_key ??
+      bookingKey("", b.flight_id, b.passenger);
+    if (seen.has(key) || (b.idempotency_key && seen.has(b.idempotency_key))) {
+      continue;
+    }
+    const hit = findBookingOnServer(server, {
+      flight_id: b.flight_id,
+      passenger: b.passenger,
+      idempotency_key: b.idempotency_key ?? "",
+    });
+    if (hit) {
+      push({
+        flight_id: hit.flight_id,
+        passenger: hit.passenger,
+        idempotency_key: hit.idempotency_key ?? key,
+      });
+    } else {
+      push({
+        flight_id: b.flight_id,
+        passenger: b.passenger,
+        idempotency_key: b.idempotency_key ?? key,
+      });
+    }
+  }
+
+  return { bookings: out, recovered };
+}
+
 /**
  * Planner contract for tool messages:
  *   {"tool":"<name>","result":<object>}  or  {"tool":"<name>","result":{"error":"..."}}
@@ -438,6 +531,12 @@ export async function runAgent(
   const runId = randomUUID();
   const errors: AgentResult["errors"] = [];
   const bookings: AgentResult["bookings"] = [];
+  /** Every book_flight intent this run — used for end-of-run GET /bookings sync. */
+  const attemptedBookings: Array<{
+    flight_id: string;
+    passenger: string;
+    idempotency_key: string;
+  }> = [];
 
   let messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -977,6 +1076,16 @@ export async function runAgent(
           );
         }
 
+        const bookIntent = {
+          flight_id: parsedArgs.flight_id,
+          passenger: parsedArgs.passenger,
+          idempotency_key: bookingKey(
+            args.goal,
+            parsedArgs.flight_id,
+            parsedArgs.passenger,
+          ),
+        };
+        attemptedBookings.push(bookIntent);
         const bookOutcome = await bookWithReconcile(
           client,
           doSleep,
@@ -1043,21 +1152,83 @@ export async function runAgent(
   } catch (err) {
     if (err instanceof StopEarly) {
       errors.push({ code: err.code, message: err.message, step: steps });
-      return finish(err.status, err.message);
+      return await finish(err.status, err.message);
     }
     throw err;
   }
 
-  return finish(null, null);
+  return await finish(null, null);
+
+  /** GET /bookings is source of truth: sync claims before writing result.json. */
+  async function endOfRunReconcile(): Promise<void> {
+    if (attemptedBookings.length === 0 && bookings.length === 0) return;
+    try {
+      const listed = await client.listBookings({
+        seed: args.seed,
+        signal: AbortSignal.timeout(CONFIG.callTimeoutMs),
+      });
+      if (listed.status !== 200) {
+        trace({
+          step: steps,
+          action: "bookings.end_of_run_reconcile",
+          request_id: listed.headers.get("x-request-id") ?? undefined,
+          outcome: `error:${listed.status}`,
+        });
+        return;
+      }
+      const server = (listed.body as { bookings: ServerBookingRow[] }).bookings;
+      const before = bookings.length;
+      const merged = mergeRunBookingsFromServer(
+        bookings,
+        attemptedBookings,
+        server,
+      );
+      bookings.length = 0;
+      bookings.push(...merged.bookings);
+      if (merged.recovered > 0) {
+        for (let i = errors.length - 1; i >= 0; i--) {
+          if (
+            errors[i].code === "booking_unconfirmed" ||
+            errors[i].code === "booking_service_unavailable"
+          ) {
+            errors.splice(i, 1);
+          }
+        }
+      }
+      trace({
+        step: steps,
+        action: "bookings.end_of_run_reconcile",
+        request_id: listed.headers.get("x-request-id") ?? undefined,
+        outcome:
+          merged.recovered > 0
+            ? `ok:recovered_${merged.recovered}`
+            : bookings.length !== before
+              ? "ok:synced"
+              : "ok",
+        bookings_count: bookings.length,
+      });
+    } catch (err) {
+      trace({
+        step: steps,
+        action: "bookings.end_of_run_reconcile",
+        outcome: `error:${err instanceof Error ? err.name : "unknown"}`,
+      });
+    }
+  }
 
   // ----- status/answer assembly -----
-  function finish(
+  async function finish(
     stopStatus: "partial" | "failed" | null,
     stopMessage: string | null,
-  ): AgentResult {
+  ): Promise<AgentResult> {
+    await endOfRunReconcile();
+
     const goalMet = searchDone && (!intent.wantBooking || bookings.length > 0);
-    const status: AgentResult["status"] =
-      stopStatus ?? (goalMet ? "success" : "failed");
+    // End-of-run reconcile may recover a booking the client thought failed —
+    // prefer server truth over an earlier stopStatus when the goal is met.
+    const status: AgentResult["status"] = goalMet
+      ? "success"
+      : (stopStatus ?? "failed");
 
     const parts: string[] = [];
     if (finalContent) parts.push(finalContent);
@@ -1078,7 +1249,7 @@ export async function runAgent(
       refetched: staleRefetched,
     });
     if (staleNote) parts.push(staleNote);
-    if (stopMessage) parts.push(`Stopped: ${stopMessage}`);
+    if (stopMessage && status !== "success") parts.push(`Stopped: ${stopMessage}`);
     if (status === "failed" && !finalContent && !stopMessage)
       parts.push("The goal could not be completed.");
 
@@ -1117,10 +1288,66 @@ async function defaultConfirm(
 // Booking with timeout handling + server-truth reconciliation
 // ---------------------------------------------------------------------------
 
+/** GET /bookings after an ambiguous book outcome. Returns the hit if present. */
+async function reconcileBookingViaList(
+  client: MockApiClient,
+  runArgs: { seed?: string },
+  want: { flight_id: string; passenger: string; idempotency_key: string },
+  trace: (line: Record<string, unknown>) => void,
+  step: number,
+  label: string,
+): Promise<ServerBookingRow | null> {
+  try {
+    const listed = await client.listBookings({
+      seed: runArgs.seed,
+      signal: AbortSignal.timeout(CONFIG.callTimeoutMs),
+    });
+    if (listed.status !== 200) {
+      trace({
+        step,
+        action: "bookings.reconcile",
+        request_id: listed.headers.get("x-request-id") ?? undefined,
+        idempotency_key: want.idempotency_key,
+        outcome: `error:${listed.status}:${label}`,
+      });
+      return null;
+    }
+    const server = (listed.body as { bookings: ServerBookingRow[] }).bookings;
+    const hit = findBookingOnServer(server, want);
+    if (hit) {
+      trace({
+        step,
+        action: "book_flight",
+        request_id: listed.headers.get("x-request-id") ?? undefined,
+        idempotency_key: want.idempotency_key,
+        outcome: `ok:reconciled_via_bookings:${label}`,
+      });
+      return hit;
+    }
+    trace({
+      step,
+      action: "bookings.reconcile",
+      request_id: listed.headers.get("x-request-id") ?? undefined,
+      idempotency_key: want.idempotency_key,
+      outcome: `miss:${label}`,
+    });
+    return null;
+  } catch (err) {
+    trace({
+      step,
+      action: "bookings.reconcile",
+      idempotency_key: want.idempotency_key,
+      outcome: `error:${err instanceof Error ? err.name : "unknown"}:${label}`,
+    });
+    return null;
+  }
+}
+
 /**
  * Book with retries. The idempotency_key is derived once (deterministic from
  * goal + flight_id + passenger) and reused on every retry. A fresh key per
  * attempt would double-book if the first call committed then timed out.
+ * After any timeout, GET /bookings is the source of truth before retrying.
  */
 export async function bookWithReconcile(
   client: MockApiClient,
@@ -1132,10 +1359,15 @@ export async function bookWithReconcile(
   booking: { flight_id: string; passenger: string },
 ): Promise<
   | { ok: true; attempts: number; key: string; replayed?: boolean }
-  | { ok: false; error: string; code: string; attempts: number }
+  | { ok: false; error: string; code: string; attempts: number; key: string }
 > {
   // One stable key for this booking intent — reuse on retry (≤128 chars).
   const key = bookingKey(runArgs.goal, booking.flight_id, booking.passenger);
+  const want = {
+    flight_id: booking.flight_id,
+    passenger: booking.passenger,
+    idempotency_key: key,
+  };
   let latency = 0;
   let lastFailure = "unknown error";
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -1192,6 +1424,7 @@ export async function bookWithReconcile(
         error: `HTTP ${res.status} (${fatalHttpCode(res.status)}, non-retryable)`,
         code: fatalHttpCode(res.status),
         attempts: attempt + 1,
+        key,
       };
     } catch (err) {
       const isTimeout =
@@ -1208,33 +1441,32 @@ export async function bookWithReconcile(
         idempotency_key: key,
         outcome: "timeout",
       });
+      // Timeout is ambiguous (may have committed). Ask GET /bookings first.
+      const hit = await reconcileBookingViaList(
+        client,
+        runArgs,
+        want,
+        trace,
+        step,
+        `after_timeout_attempt_${attempt}`,
+      );
+      if (hit) {
+        return { ok: true, attempts: attempt + 1, key, replayed: true };
+      }
     }
   }
 
-  // Both attempts failed: reconcile against server-side truth before giving up.
-  const listed = await client.listBookings({
-    seed: runArgs.seed,
-    signal: AbortSignal.timeout(CONFIG.callTimeoutMs),
-  });
-  if (listed.status === 200) {
-    const body = listed.body as { bookings: Array<{ flight_id: string }> };
-    if (body.bookings.some((b) => b.flight_id === booking.flight_id)) {
-      trace({
-        step,
-        action: "book_flight",
-        request_id: listed.headers.get("x-request-id") ?? undefined,
-        idempotency_key: key,
-        outcome: "ok:reconciled_via_bookings",
-      });
-      return { ok: true, attempts: 2, key, replayed: true };
-    }
-  } else {
-    trace({
-      step,
-      action: "bookings.reconcile",
-      request_id: listed.headers.get("x-request-id") ?? undefined,
-      outcome: `error:${listed.status}`,
-    });
+  // Still unsure after retries: one last GET /bookings before failing.
+  const hit = await reconcileBookingViaList(
+    client,
+    runArgs,
+    want,
+    trace,
+    step,
+    "after_retries",
+  );
+  if (hit) {
+    return { ok: true, attempts: 2, key, replayed: true };
   }
   return {
     ok: false,
@@ -1244,6 +1476,7 @@ export async function bookWithReconcile(
         ? "booking_unconfirmed"
         : "booking_service_unavailable",
     attempts: 2,
+    key,
   };
 }
 
