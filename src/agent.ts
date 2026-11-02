@@ -71,17 +71,33 @@ export class TraceWriter {
 // ---------------------------------------------------------------------------
 
 export const CONFIG = {
-  maxSteps: 400,
-  maxWallMs: 240_000,
-  maxTokens: 4_000_000,
+  maxSteps: 40,
+  maxWallMs: 90_000,
+  // Docs: scripted planner usage is small; sensible budget ~1e4–1e5 tokens.
+  maxTokens: 100_000,
   callTimeoutMs: 10_000, // matches the documented server behaviour (timeouts sleep ~12s)
   chatRetries: 5,
   readRetries: 2,
   malformedReaskLimit: 3,
-  duplicateReadLimit: 5000,
+  duplicateReadLimit: 8,
   backoffBaseMs: 400,
   backoffCapMs: 8_000,
 };
+
+/** Cost comes only from /llm/chat usage (tools have none). */
+export function usageCost(
+  usage:
+    | { prompt_tokens?: number; completion_tokens?: number }
+    | null
+    | undefined,
+): number {
+  const prompt = Number(usage?.prompt_tokens ?? 0);
+  const completion = Number(usage?.completion_tokens ?? 0);
+  return (
+    (Number.isFinite(prompt) ? prompt : 0) +
+    (Number.isFinite(completion) ? completion : 0)
+  );
+}
 
 export type Deps = {
   fetchImpl?: typeof fetch;
@@ -407,13 +423,14 @@ export async function runAgent(
         const requestId = res.headers.get("x-request-id") ?? undefined;
         if (res.status === 200) {
           const body = res.body as ChatResponse;
-          tokens += body.usage.prompt_tokens + body.usage.completion_tokens;
+          const callTokens = usageCost(body.usage);
+          tokens += callTokens; // running cost budget from chat usage only
           const tc = body.message?.tool_calls?.[0] ?? null;
           trace({
             step: steps,
             action: "llm.chat",
             latency_ms: latency,
-            tokens: body.usage.prompt_tokens + body.usage.completion_tokens,
+            tokens: callTokens,
             retry_count: attempt,
             request_id: requestId,
             outcome: "ok",
@@ -598,23 +615,33 @@ export async function runAgent(
           "Stopped at the wall-clock cap.",
         );
 
-      // 1) chat
+      // Stop before another planner call if the chat-usage budget is already spent.
+      if (tokens > CONFIG.maxTokens) {
+        throw new StopEarly(
+          "partial",
+          "cost_budget_exceeded",
+          `Token budget exceeded (${tokens} > ${CONFIG.maxTokens}).`,
+        );
+      }
+
+      // 1) chat — usage.prompt_tokens + usage.completion_tokens feed the cost budget
       const { toolCall, content } = await chatWithRetry();
       steps += 1;
 
-      if (tokens > CONFIG.maxTokens && toolCall) {
+      // Final answer → stop (even if this last chat crossed the budget)
+      if (!toolCall) {
+        finalContent = content ?? "Done.";
+        malformedStreak = 0;
+        break;
+      }
+
+      // Tool call requested but budget blown — do not spend more tools/planner turns.
+      if (tokens > CONFIG.maxTokens) {
         throw new StopEarly(
           "partial",
           "cost_budget_exceeded",
           `Token budget exceeded (${tokens} > ${CONFIG.maxTokens}) mid-task.`,
         );
-      }
-
-      // Final answer → stop
-      if (!toolCall) {
-        finalContent = content ?? "Done.";
-        malformedStreak = 0;
-        break;
       }
 
       // --- validate planner tool call (corrupt args = real fault, not a bug) ---
@@ -904,6 +931,7 @@ export async function runAgent(
     if (status === "failed" && !finalContent && !stopMessage)
       parts.push("The goal could not be completed.");
 
+    // `cost` = sum of chat usage tokens (prompt + completion) across the run.
     const result: AgentResult = {
       status,
       answer: parts.join(" "),

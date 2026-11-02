@@ -9,6 +9,7 @@ Fill this in as you go. It is read before the debrief.
 ## Design decisions
 
 - **Keep the starter loop; harden it (no rewrite from scratch)** → The assessment scores judgment on failure paths and a live walkthrough of the shipped code. Rewriting would burn the 2–3h budget and make the contractor code harder to defend line-by-line. → Gave up a “clean architecture” rewrite / new framework; instead patched retries, auth, seed pinning, tool-result shape, arg validation, and always-write outputs on top of `src/agent.ts` + thin `src/client.ts`.
+- **Caps** → `maxSteps=40`, `maxWallMs=90s`, `maxTokens=100_000` (from `/llm/chat` usage only). Docs suggest ~1e4–1e5 tokens and finishing under ~2 minutes; the starter’s 4e6 tokens / 400 steps were too loose to ever fire. → Gave up “infinite runway” for long multi-city fantasies.
 - (more decisions as you go → why → what you gave up)
 
 ## Failure taxonomy

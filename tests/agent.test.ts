@@ -9,6 +9,8 @@ import {
   retryWaitMs,
   toolResultContent,
   parseToolArguments,
+  usageCost,
+  CONFIG,
 } from "../src/agent";
 import { validateResult } from "../src/types";
 import { promises as fs } from "fs";
@@ -40,6 +42,12 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(isRetryableStatus(503)).toBe(true);
     expect(fatalHttpCode(400)).toBe("bad_request");
     expect(fatalHttpCode(403)).toBe("revoked");
+  });
+
+  it("derives cost budget from chat usage tokens only", () => {
+    expect(usageCost({ prompt_tokens: 100, completion_tokens: 40 })).toBe(140);
+    expect(usageCost(undefined)).toBe(0);
+    expect(CONFIG.maxTokens).toBeLessThanOrEqual(100_000);
   });
 
   it("parses tool arguments and treats corrupt/missing args as faults", () => {
