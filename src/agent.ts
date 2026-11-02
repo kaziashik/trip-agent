@@ -217,6 +217,33 @@ export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 503;
 }
 
+/**
+ * How long to sleep before retrying.
+ * 429: wait EXACTLY Retry-After seconds (rate limit: 60/min, 5000/day).
+ * 503 / other: prefer Retry-After if present, else exponential backoff.
+ */
+export function retryWaitMs(
+  status: number,
+  headers: Headers,
+  attempt: number,
+): number {
+  const raw = headers.get("retry-after");
+  const retryAfterSec = raw === null || raw === "" ? NaN : Number(raw);
+
+  if (status === 429) {
+    if (Number.isFinite(retryAfterSec) && retryAfterSec >= 0) {
+      return retryAfterSec * 1000;
+    }
+    // Header missing (shouldn't happen on a real 429) — don't hammer the API.
+    return CONFIG.backoffCapMs;
+  }
+
+  if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return retryAfterSec * 1000;
+  }
+  return backoffMs(attempt);
+}
+
 export function bookingKey(
   goal: string,
   flightId: string,
@@ -330,11 +357,7 @@ export async function runAgent(
         }
 
         if (isRetryableStatus(res.status)) {
-          const retryAfter = Number(res.headers.get("retry-after") ?? "");
-          const waitMs =
-            Number.isFinite(retryAfter) && retryAfter > 0
-              ? retryAfter * 1000
-              : backoffMs(attempt);
+          const waitMs = retryWaitMs(res.status, res.headers, attempt);
           lastError = `HTTP ${res.status}`;
           trace({
             step: steps,
@@ -410,11 +433,7 @@ export async function runAgent(
           return { ok: true, body: res.body as T };
         }
         if (isRetryableStatus(res.status)) {
-          const retryAfter = Number(res.headers.get("retry-after") ?? "");
-          const waitMs =
-            Number.isFinite(retryAfter) && retryAfter > 0
-              ? retryAfter * 1000
-              : backoffMs(attempt);
+          const waitMs = retryWaitMs(res.status, res.headers, attempt);
           trace({
             step: steps,
             action: name,
@@ -913,12 +932,7 @@ async function bookWithReconcile(
       }
       if (isRetryableStatus(res.status)) {
         lastFailure = `HTTP ${res.status}`;
-        const retryAfter = Number(res.headers.get("retry-after") ?? "");
-        await doSleep(
-          Number.isFinite(retryAfter) && retryAfter > 0
-            ? retryAfter * 1000
-            : 1000,
-        );
+        await doSleep(retryWaitMs(res.status, res.headers, attempt));
         continue;
       }
       return {

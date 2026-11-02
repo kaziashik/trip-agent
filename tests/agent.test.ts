@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs, writeJson, TraceWriter, isRetryableStatus } from "../src/agent";
+import {
+  parseArgs,
+  writeJson,
+  TraceWriter,
+  isRetryableStatus,
+  retryWaitMs,
+} from "../src/agent";
 import { validateResult } from "../src/types";
 import { promises as fs } from "fs";
 import os from "os";
@@ -28,6 +34,14 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(isRetryableStatus(422)).toBe(false);
     expect(isRetryableStatus(429)).toBe(true);
     expect(isRetryableStatus(503)).toBe(true);
+  });
+
+  it("waits exactly Retry-After seconds on 429", () => {
+    const headers = new Headers({ "retry-after": "3" });
+    expect(retryWaitMs(429, headers, 0)).toBe(3000);
+    expect(retryWaitMs(429, new Headers({ "retry-after": "0" }), 2)).toBe(0);
+    // 503 without Retry-After uses backoff, not a fixed 429 rule
+    expect(retryWaitMs(503, new Headers(), 0)).toBeGreaterThan(0);
   });
 
   it("rejects a structurally invalid result", () => {
