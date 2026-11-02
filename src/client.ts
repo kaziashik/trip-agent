@@ -12,7 +12,11 @@ export type ChatMessage = {
 
 export type ChatResponse = {
   id: string;
-  message: { role: "assistant"; content: string | null; tool_calls: { name: string; arguments: string }[] | null };
+  message: {
+    role: "assistant";
+    content: string | null;
+    tool_calls: { name: string; arguments: string }[] | null;
+  };
   usage: { prompt_tokens: number; completion_tokens: number };
 };
 
@@ -33,14 +37,17 @@ export class MockApiClient {
 
   private async request<T>(
     path: string,
-    init: { method?: string; body?: unknown; signal?: AbortSignal; seed?: string | number } = {},
+    init: {
+      method?: string;
+      body?: unknown;
+      signal?: AbortSignal;
+      seed?: string | number;
+    } = {},
   ): Promise<ApiEnvelope<T>> {
     // Tolerate a trailing slash in TRIP_AGENT_BASE_URL (no "//api/..." 308 round trips).
     const base = this.opts.baseUrl.replace(/\/+$/, "");
     const url = new URL(`${base}${path}`);
     if (init.seed !== undefined) url.searchParams.set("seed", `${init.seed}`);
-    // Every mock call must carry Bearer auth. Missing/unknown key → HTTP 401
-    // from the server (agent must not retry that).
     const res = await (this.opts.fetchImpl ?? fetch)(url.toString(), {
       method: init.method ?? "POST",
       headers: {
@@ -50,20 +57,23 @@ export class MockApiClient {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: init.signal,
     });
-    const body = (await res.json().catch(() => ({ error: { code: "bad_json", message: "response was not JSON" } }))) as T;
-    // Docs: every response carries x-request-id — log it for debugging / replay.
-    const requestId = res.headers.get("x-request-id") ?? "(missing)";
-    const seedUsed = res.headers.get("x-seed");
-    console.error(
-      `[mock] ${init.method ?? "POST"} ${path} → ${res.status} x-request-id=${requestId}` +
-        (seedUsed ? ` x-seed=${seedUsed}` : ""),
-    );
+    const body = (await res
+      .json()
+      .catch(() => ({
+        error: { code: "bad_json", message: "response was not JSON" },
+      }))) as T;
     return { status: res.status, headers: res.headers, body };
   }
 
-  chat(messages: ChatMessage[], opts: { seed?: string | number; signal?: AbortSignal } = {}) {
+  chat(
+    messages: ChatMessage[],
+    opts: { seed?: string | number; signal?: AbortSignal } = {},
+  ) {
     return this.request<ChatResponse>("/api/mock/v1/llm/chat", {
-      body: { messages, ...(opts.seed !== undefined ? { seed: opts.seed } : {}) },
+      body: {
+        messages,
+        ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+      },
       signal: opts.signal,
     });
   }
@@ -72,14 +82,23 @@ export class MockApiClient {
     args: { origin: string; dest: string; date: string },
     opts: { seed?: string | number; signal?: AbortSignal } = {},
   ) {
-    return this.request<{ results: unknown[] }>("/api/mock/v1/tools/search_flights", { body: args, ...opts });
-  }
-
-  getWeather(args: { city: string; date: string }, opts: { seed?: string | number; signal?: AbortSignal } = {}) {
-    return this.request<{ city: string; date: string; temperature_c: number; conditions: string; stale: boolean }>(
-      "/api/mock/v1/tools/get_weather",
+    return this.request<{ results: unknown[] }>(
+      "/api/mock/v1/tools/search_flights",
       { body: args, ...opts },
     );
+  }
+
+  getWeather(
+    args: { city: string; date: string },
+    opts: { seed?: string | number; signal?: AbortSignal } = {},
+  ) {
+    return this.request<{
+      city: string;
+      date: string;
+      temperature_c: number;
+      conditions: string;
+      stale: boolean;
+    }>("/api/mock/v1/tools/get_weather", { body: args, ...opts });
   }
 
   bookFlight(
@@ -87,14 +106,26 @@ export class MockApiClient {
     opts: { seed?: string | number; signal?: AbortSignal } = {},
   ) {
     return this.request<{
-      booking: { booking_id: string; flight_id: string; passenger: string; idempotency_key: string; booked_at: string };
+      booking: {
+        booking_id: string;
+        flight_id: string;
+        passenger: string;
+        idempotency_key: string;
+        booked_at: string;
+      };
       idempotent_replay?: boolean;
     }>("/api/mock/v1/tools/book_flight", { body: args, ...opts });
   }
 
   listBookings(opts: { seed?: string | number; signal?: AbortSignal } = {}) {
     return this.request<{
-      bookings: Array<{ booking_id: string; flight_id: string; passenger: string; idempotency_key: string; booked_at: string }>;
+      bookings: Array<{
+        booking_id: string;
+        flight_id: string;
+        passenger: string;
+        idempotency_key: string;
+        booked_at: string;
+      }>;
     }>("/api/mock/v1/tools/bookings", { method: "GET", ...opts });
   }
 }
