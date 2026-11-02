@@ -48,6 +48,10 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   await fs.writeFile(path, JSON.stringify(value, null, 2));
 }
 
+/**
+ * JSONL trace: one object per step, always stamped with run_id.
+ * Contract fields: run_id, step, action, latency_ms, tokens, retry_count, outcome.
+ */
 export class TraceWriter {
   private lines: string[] = [];
   constructor(
@@ -55,7 +59,18 @@ export class TraceWriter {
     private runId: string,
   ) {}
   write(line: Omit<TraceLine, "run_id">) {
-    this.lines.push(JSON.stringify({ run_id: this.runId, ...line }));
+    this.lines.push(
+      JSON.stringify({
+        run_id: this.runId,
+        step: line.step,
+        action: line.action,
+        ...(line.args !== undefined ? { args: line.args } : {}),
+        latency_ms: line.latency_ms ?? 0,
+        tokens: line.tokens ?? 0,
+        retry_count: line.retry_count ?? 0,
+        outcome: line.outcome ?? "ok",
+      }),
+    );
   }
   async close(): Promise<void> {
     await fs.writeFile(

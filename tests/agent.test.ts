@@ -24,7 +24,12 @@ import {
   isCallTimeoutError,
   CONFIG,
 } from "../src/agent";
-import { validateResult, RESULT_JSON_KEYS } from "../src/types";
+import {
+  validateResult,
+  validateTraceLine,
+  RESULT_JSON_KEYS,
+  TRACE_LINE_KEYS,
+} from "../src/types";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
@@ -356,6 +361,63 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     await t.close();
     expect(JSON.parse(await fs.readFile(path.join(dir, "r.json"), "utf8"))).toEqual({ ok: true });
     expect(await fs.readFile(path.join(dir, "t.jsonl"), "utf8")).toContain("search_flights");
+  });
+
+  it("trace.jsonl: one line per step with run_id, step, action, latency, tokens, retry_count, outcome", async () => {
+    expect([...TRACE_LINE_KEYS]).toEqual([
+      "run_id",
+      "step",
+      "action",
+      "latency_ms",
+      "tokens",
+      "retry_count",
+      "outcome",
+    ]);
+
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "trip-"));
+    const tracePath = path.join(dir, "trace.jsonl");
+    const t = new TraceWriter(tracePath, "run-abc");
+    t.write({
+      step: 1,
+      action: "llm.chat",
+      latency_ms: 213,
+      tokens: 412,
+      retry_count: 0,
+      outcome: "ok",
+    });
+    t.write({
+      step: 2,
+      action: "search_flights",
+      latency_ms: 50,
+      retry_count: 1,
+      outcome: "retryable:503",
+    });
+    await t.close();
+
+    const raw = await fs.readFile(tracePath, "utf8");
+    const lines = raw.trimEnd().split("\n");
+    expect(lines).toHaveLength(2); // one JSON object per step
+
+    const first = JSON.parse(lines[0]) as Record<string, unknown>;
+    expect(validateTraceLine(first)).toEqual([]);
+    expect(first).toMatchObject({
+      run_id: "run-abc",
+      step: 1,
+      action: "llm.chat",
+      latency_ms: 213,
+      tokens: 412,
+      retry_count: 0,
+      outcome: "ok",
+    });
+    for (const key of TRACE_LINE_KEYS) {
+      expect(first).toHaveProperty(key);
+    }
+
+    const second = JSON.parse(lines[1]) as Record<string, unknown>;
+    expect(validateTraceLine(second)).toEqual([]);
+    expect(second.run_id).toBe("run-abc");
+    expect(second.tokens).toBe(0); // default when omitted
+    expect(second.outcome).toBe("retryable:503");
   });
 
   it("still writes trace.jsonl when the agent throws (try/finally)", async () => {

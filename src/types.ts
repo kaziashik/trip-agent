@@ -24,11 +24,42 @@ export type TraceLine = {
   step: number;
   action: string;
   args?: unknown;
+  /** Plan says "latency"; contract field name is latency_ms (ms). */
   latency_ms?: number;
   tokens?: number;
   retry_count?: number;
   outcome?: string;
 };
+
+/** Core fields graders expect on each trace.jsonl line (plus optional args). */
+export const TRACE_LINE_KEYS = [
+  "run_id",
+  "step",
+  "action",
+  "latency_ms",
+  "tokens",
+  "retry_count",
+  "outcome",
+] as const;
+
+/** Validate one parsed JSONL object from trace.jsonl. */
+export function validateTraceLine(line: unknown): string[] {
+  const errors: string[] = [];
+  const o = line as Record<string, unknown> | null;
+  if (!o || typeof o !== "object") return ["trace line is not an object"];
+  if (typeof o.run_id !== "string") errors.push("run_id must be a string");
+  if (typeof o.step !== "number") errors.push("step must be a number");
+  if (typeof o.action !== "string") errors.push("action must be a string");
+  if (o.latency_ms !== undefined && typeof o.latency_ms !== "number")
+    errors.push("latency_ms must be a number");
+  if (o.tokens !== undefined && typeof o.tokens !== "number")
+    errors.push("tokens must be a number");
+  if (o.retry_count !== undefined && typeof o.retry_count !== "number")
+    errors.push("retry_count must be a number");
+  if (o.outcome !== undefined && typeof o.outcome !== "string")
+    errors.push("outcome must be a string");
+  return errors;
+}
 
 /** Minimal validation — enough to catch a malformed result before submission. */
 export function validateResult(r: unknown): string[] {
