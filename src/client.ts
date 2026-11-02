@@ -51,6 +51,13 @@ export class MockApiClient {
       signal: init.signal,
     });
     const body = (await res.json().catch(() => ({ error: { code: "bad_json", message: "response was not JSON" } }))) as T;
+    // Docs: every response carries x-request-id — log it for debugging / replay.
+    const requestId = res.headers.get("x-request-id") ?? "(missing)";
+    const seedUsed = res.headers.get("x-seed");
+    console.error(
+      `[mock] ${init.method ?? "POST"} ${path} → ${res.status} x-request-id=${requestId}` +
+        (seedUsed ? ` x-seed=${seedUsed}` : ""),
+    );
     return { status: res.status, headers: res.headers, body };
   }
 

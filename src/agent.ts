@@ -312,6 +312,7 @@ export async function runAgent(
           signal: AbortSignal.timeout(CONFIG.callTimeoutMs),
         });
         const latency = now() - started;
+        const requestId = res.headers.get("x-request-id") ?? undefined;
         if (res.status === 200) {
           const body = res.body as ChatResponse;
           tokens += body.usage.prompt_tokens + body.usage.completion_tokens;
@@ -322,6 +323,7 @@ export async function runAgent(
             latency_ms: latency,
             tokens: body.usage.prompt_tokens + body.usage.completion_tokens,
             retry_count: attempt,
+            request_id: requestId,
             outcome: "ok",
           });
           return { toolCall: tc, content: body.message?.content ?? null };
@@ -339,6 +341,7 @@ export async function runAgent(
             action: "llm.chat",
             latency_ms: latency,
             retry_count: attempt,
+            request_id: requestId,
             outcome: `retryable:${res.status}`,
           });
           await doSleep(waitMs);
@@ -394,12 +397,14 @@ export async function runAgent(
       try {
         const res = await fn(AbortSignal.timeout(CONFIG.callTimeoutMs));
         const latency = now() - started;
+        const requestId = res.headers.get("x-request-id") ?? undefined;
         if (res.status === 200) {
           trace({
             step: steps,
             action: name,
             retry_count: attempt,
             latency_ms: latency,
+            request_id: requestId,
             outcome: "ok",
           });
           return { ok: true, body: res.body as T };
@@ -415,6 +420,7 @@ export async function runAgent(
             action: name,
             retry_count: attempt,
             latency_ms: latency,
+            request_id: requestId,
             outcome: `retryable:${res.status}`,
           });
           await doSleep(waitMs);
@@ -887,6 +893,7 @@ async function bookWithReconcile(
         },
       );
       latency = now() - started;
+      const requestId = res.headers.get("x-request-id") ?? undefined;
       if (res.status === 200) {
         const body = res.body as { idempotent_replay?: boolean };
         trace({
@@ -894,6 +901,7 @@ async function bookWithReconcile(
           action: "book_flight",
           latency_ms: latency,
           retry_count: attempt,
+          request_id: requestId,
           outcome: body.idempotent_replay ? "ok:replay" : "ok",
         });
         return {
@@ -946,6 +954,7 @@ async function bookWithReconcile(
       trace({
         step,
         action: "book_flight",
+        request_id: listed.headers.get("x-request-id") ?? undefined,
         outcome: "ok:reconciled_via_bookings",
       });
       return { ok: true, attempts: 2, key: "reconciled", replayed: true };
@@ -954,6 +963,7 @@ async function bookWithReconcile(
     trace({
       step,
       action: "bookings.reconcile",
+      request_id: listed.headers.get("x-request-id") ?? undefined,
       outcome: `error:${listed.status}`,
     });
   }
