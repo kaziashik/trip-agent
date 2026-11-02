@@ -8,7 +8,8 @@ Fill this in as you go. It is read before the debrief.
 
 ## Design decisions
 
-- (decision → why → what I gave up)
+- **Keep the starter loop; harden it (no rewrite from scratch)** → The assessment scores judgment on failure paths and a live walkthrough of the shipped code. Rewriting would burn the 2–3h budget and make the contractor code harder to defend line-by-line. → Gave up a “clean architecture” rewrite / new framework; instead patched retries, auth, seed pinning, tool-result shape, arg validation, and always-write outputs on top of `src/agent.ts` + thin `src/client.ts`.
+- (more decisions as you go → why → what you gave up)
 
 ## Failure taxonomy
 
