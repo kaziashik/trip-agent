@@ -14,6 +14,7 @@ import {
   sanitizeFreeText,
   sanitizeToolResult,
   isFlightFromSearch,
+  staleWeatherAnswerNote,
   CONFIG,
 } from "../src/agent";
 import { validateResult } from "../src/types";
@@ -65,6 +66,16 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     });
     expect(some.empty).toBe(false);
     expect(some.results).toHaveLength(1);
+  });
+
+  it("explains stale weather after a one-time refetch", () => {
+    expect(
+      staleWeatherAnswerNote({ sawStale: true, refetched: true }),
+    ).toMatch(/refetched once/i);
+    expect(
+      staleWeatherAnswerNote({ sawStale: true, refetched: false }),
+    ).toMatch(/stale/i);
+    expect(staleWeatherAnswerNote({ sawStale: false, refetched: false })).toBeNull();
   });
 
   it("sanitizes injection-like notes before they reach the planner", () => {
