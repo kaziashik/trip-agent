@@ -1117,7 +1117,12 @@ async function defaultConfirm(
 // Booking with timeout handling + server-truth reconciliation
 // ---------------------------------------------------------------------------
 
-async function bookWithReconcile(
+/**
+ * Book with retries. The idempotency_key is derived once (deterministic from
+ * goal + flight_id + passenger) and reused on every retry. A fresh key per
+ * attempt would double-book if the first call committed then timed out.
+ */
+export async function bookWithReconcile(
   client: MockApiClient,
   doSleep: (ms: number) => Promise<void>,
   now: () => number,
@@ -1129,12 +1134,11 @@ async function bookWithReconcile(
   | { ok: true; attempts: number; key: string; replayed?: boolean }
   | { ok: false; error: string; code: string; attempts: number }
 > {
+  // One stable key for this booking intent — reuse on retry (≤128 chars).
+  const key = bookingKey(runArgs.goal, booking.flight_id, booking.passenger);
   let latency = 0;
   let lastFailure = "unknown error";
   for (let attempt = 0; attempt < 2; attempt++) {
-    // Fresh key per attempt so a retried booking can't collide with a
-    // half-written one.
-    const key = `${bookingKey(runArgs.goal, booking.flight_id, booking.passenger)}_${attempt}`;
     const started = now();
     try {
       const res = await client.bookFlight(
@@ -1158,6 +1162,7 @@ async function bookWithReconcile(
           latency_ms: latency,
           retry_count: attempt,
           request_id: requestId,
+          idempotency_key: key,
           outcome: body.idempotent_replay ? "ok:replay" : "ok",
         });
         return {
@@ -1179,6 +1184,7 @@ async function bookWithReconcile(
         latency_ms: latency,
         retry_count: attempt,
         request_id: requestId,
+        idempotency_key: key,
         outcome: `fatal:${fatalHttpCode(res.status)}`,
       });
       return {
@@ -1199,6 +1205,7 @@ async function bookWithReconcile(
         action: "book_flight",
         latency_ms: latency,
         retry_count: attempt,
+        idempotency_key: key,
         outcome: "timeout",
       });
     }
@@ -1216,9 +1223,10 @@ async function bookWithReconcile(
         step,
         action: "book_flight",
         request_id: listed.headers.get("x-request-id") ?? undefined,
+        idempotency_key: key,
         outcome: "ok:reconciled_via_bookings",
       });
-      return { ok: true, attempts: 2, key: "reconciled", replayed: true };
+      return { ok: true, attempts: 2, key, replayed: true };
     }
   } else {
     trace({
