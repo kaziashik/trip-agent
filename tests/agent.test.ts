@@ -6,6 +6,7 @@ import {
   isRetryableStatus,
   fatalHttpCode,
   retryWaitMs,
+  toolResultContent,
 } from "../src/agent";
 import { validateResult } from "../src/types";
 import { promises as fs } from "fs";
@@ -37,6 +38,17 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
     expect(isRetryableStatus(503)).toBe(true);
     expect(fatalHttpCode(400)).toBe("bad_request");
     expect(fatalHttpCode(403)).toBe("revoked");
+  });
+
+  it("formats tool results in the planner convention", () => {
+    expect(JSON.parse(toolResultContent("search_flights", { results: [] }))).toEqual({
+      tool: "search_flights",
+      result: { results: [] },
+    });
+    expect(JSON.parse(toolResultContent("book_flight", { error: "nope" }))).toEqual({
+      tool: "book_flight",
+      result: { error: "nope" },
+    });
   });
 
   it("waits exactly Retry-After seconds on 429", () => {
