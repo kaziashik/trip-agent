@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs, writeJson, TraceWriter } from "../src/agent";
+import { parseArgs, writeJson, TraceWriter, isRetryableStatus } from "../src/agent";
 import { validateResult } from "../src/types";
 import { promises as fs } from "fs";
 import os from "os";
@@ -19,6 +19,15 @@ describe("starter plumbing (replace/augment with your own failure-path tests)", 
       "t.jsonl",
     ]);
     expect(args).toMatchObject({ goal: "Find a flight", seed: "7", autoConfirm: true });
+  });
+
+  it("does not retry auth/validation errors (401/403/400/422)", () => {
+    expect(isRetryableStatus(401)).toBe(false);
+    expect(isRetryableStatus(403)).toBe(false);
+    expect(isRetryableStatus(400)).toBe(false);
+    expect(isRetryableStatus(422)).toBe(false);
+    expect(isRetryableStatus(429)).toBe(true);
+    expect(isRetryableStatus(503)).toBe(true);
   });
 
   it("rejects a structurally invalid result", () => {

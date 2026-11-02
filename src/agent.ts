@@ -117,10 +117,8 @@ export type GoalIntent = {
 
 export function parseGoal(goalText: string, now = new Date()): GoalIntent {
   const text = goalText.trim();
-
   let origin: string | null = null;
   let dest: string | null = null;
-
   const route = text.match(
     /from\s+([A-Za-zÀ-ÿ' .()-]+?)\s+to\s+([A-Za-zÀ-ÿ' .()-]+?)(?=\s+on\s|\s+and\s|[,.;:!?]|$)/i,
   );
@@ -128,10 +126,8 @@ export function parseGoal(goalText: string, now = new Date()): GoalIntent {
     origin = route[1].trim();
     dest = route[2].trim();
   }
-
   let date: string | null = null;
   const dateM = text.match(/\bon\s+(today|tomorrow|(\d{4}-\d{2}-\d{2}))/i);
-
   if (dateM) {
     if (dateM[2]) date = dateM[2];
     else {
@@ -141,7 +137,6 @@ export function parseGoal(goalText: string, now = new Date()): GoalIntent {
       date = d.toISOString().slice(0, 10);
     }
   }
-
   if (!date) {
     const d = new Date(now);
     d.setUTCDate(d.getUTCDate() + 1);
@@ -217,9 +212,9 @@ function backoffMs(attempt: number): number {
 }
 
 export function isRetryableStatus(status: number): boolean {
-  // 429 needs a retry, and anything in the 4xx/5xx range is worth a second
-  // attempt too — the mock APIs are flaky, so more retries felt safer.
-  return status === 429 || status >= 400;
+  // Only transport / overload faults. Auth and validation are fatal:
+  // 400 bad_request, 401 unauthorized, 403 revoked, 422 invalid_request.
+  return status === 429 || status === 503;
 }
 
 export function bookingKey(
@@ -254,9 +249,16 @@ export async function runAgent(
   const now = deps.now ?? Date.now;
   let startedAt = now();
 
+  const apiKey = process.env.TRIP_AGENT_API_KEY ?? "";
+  if (!apiKey && !deps.fetchImpl) {
+    throw new Error(
+      "TRIP_AGENT_API_KEY is missing. Set it in .env or the environment (Authorization: Bearer <key>).",
+    );
+  }
+
   const client = new MockApiClient({
     baseUrl: process.env.TRIP_AGENT_BASE_URL ?? "http://localhost:4242",
-    apiKey: process.env.TRIP_AGENT_API_KEY ?? "",
+    apiKey,
     fetchImpl: deps.fetchImpl,
   });
 
@@ -285,19 +287,10 @@ export async function runAgent(
   let staleWarning = false;
   let finalContent: string | null = null;
 
-
-
-
-
   const trace = args.trace;
   // Wall clock is recomputed from the last cycle start so long tool latencies
   // don't eat the whole budget in one go.
   const budgetLeft = () => CONFIG.maxWallMs - (now() - startedAt);
-
-
-
-
-
 
   /** One LLM call with bounded, spec-compliant retries. Fatal on 4xx. */
   async function chatWithRetry(): Promise<{
@@ -333,6 +326,7 @@ export async function runAgent(
           });
           return { toolCall: tc, content: body.message?.content ?? null };
         }
+
         if (isRetryableStatus(res.status)) {
           const retryAfter = Number(res.headers.get("retry-after") ?? "");
           const waitMs =
@@ -379,15 +373,10 @@ export async function runAgent(
     );
   }
 
-
-
-
   /** Tool call with bounded retries for retryable failures. */
   async function callTool<T>(
     name: string,
-    fn: (
-      signal: AbortSignal,
-    ) => Promise<{
+    fn: (signal: AbortSignal) => Promise<{
       status: number;
       headers: Headers;
       body: T | { error: { code: string; message: string } };
@@ -397,6 +386,7 @@ export async function runAgent(
     | { ok: false; error: string; code: string; attempts: number }
   > {
     const maxRetries = name === "llm" ? CONFIG.chatRetries : CONFIG.readRetries;
+
     let attempts = 0;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       attempts = attempt + 1;
@@ -479,11 +469,6 @@ export async function runAgent(
     ];
   }
 
-
-
-
-
-
   // ----- main loop -----
   try {
     while (finalContent === null) {
@@ -517,9 +502,6 @@ export async function runAgent(
         malformedStreak = 0;
         break;
       }
-
-
-
 
       // --- validate the model output before doing anything ---
       const name = toolCall.name;
@@ -657,6 +639,7 @@ export async function runAgent(
             }),
           },
         ];
+      
       } else if (name === "get_weather") {
         const res = await callTool(name, (signal) =>
           client.getWeather(
@@ -814,8 +797,6 @@ export async function runAgent(
 
   return finish(null, null);
 
-
-
   // ----- status/answer assembly -----
   function finish(
     stopStatus: "partial" | "failed" | null,
@@ -869,10 +850,6 @@ async function defaultConfirm(
   rl.close();
   return answer.trim().toLowerCase() === "y";
 }
-
-
-
-
 
 // ---------------------------------------------------------------------------
 // Booking with timeout handling + server-truth reconciliation

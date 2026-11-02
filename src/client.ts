@@ -39,6 +39,8 @@ export class MockApiClient {
     const base = this.opts.baseUrl.replace(/\/+$/, "");
     const url = new URL(`${base}${path}`);
     if (init.seed !== undefined) url.searchParams.set("seed", `${init.seed}`);
+    // Every mock call must carry Bearer auth. Missing/unknown key → HTTP 401
+    // from the server (agent must not retry that).
     const res = await (this.opts.fetchImpl ?? fetch)(url.toString(), {
       method: init.method ?? "POST",
       headers: {

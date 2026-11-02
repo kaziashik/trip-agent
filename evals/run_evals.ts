@@ -90,14 +90,14 @@ async function runOne(scenario: Scenario): Promise<{
   const beforeList = await bookingsList();
   const before = beforeList.length;
 
-  // On Windows, bare `npm` ENOENTs — use the .cmd shim without shell.
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  // Spawn the agent via local tsx + node (avoids Windows npm.cmd ENOENT/EINVAL).
+  const cwd = path.resolve(__dirname, "..");
+  const tsxCli = path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs");
   const agent = spawnSync(
-    npmCmd,
+    process.execPath,
     [
-      "run",
-      "agent",
-      "--",
+      tsxCli,
+      path.join("src", "agent.ts"),
       "--goal",
       scenario.goal,
       "--seed",
@@ -109,7 +109,7 @@ async function runOne(scenario: Scenario): Promise<{
       path.join(outDir, "trace.jsonl"),
     ],
     {
-      cwd: path.resolve(__dirname, ".."),
+      cwd,
       timeout: SCENARIO_TIMEOUT_MS,
       encoding: "utf8",
       env: process.env,
